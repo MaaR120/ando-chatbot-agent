@@ -21,6 +21,7 @@ from app.api.routes_moderation import router as moderation_router
 from app.api.routes_assistant import router as assistant_router
 from app.api.routes_reviews import router as reviews_router
 from app.api.routes_itinerary import router as itinerary_router
+from app.api.routes_agent import router as agent_router
 from app.core.config import settings
 
 app = FastAPI(
@@ -41,6 +42,7 @@ app.add_middleware(
 )
 
 # Inclusión de Routers
+app.include_router(agent_router)
 app.include_router(recommendations_router)
 app.include_router(optimization_router)
 app.include_router(moderation_router)
