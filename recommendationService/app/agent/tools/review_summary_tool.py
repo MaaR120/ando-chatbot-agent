@@ -1,58 +1,59 @@
 """
-LangChain Tool for consulting reviews and AI summaries of a POI.
+LangChain Tool for consulting the latest reviews and the rating of a POI.
 """
-from typing import Optional, Dict, Any
+
+from typing import Any, Dict, Optional
+
 from langchain_core.tools import tool
 from sqlalchemy import text
+from sqlalchemy.engine import Connection, RowMapping
+
+from app.agent.tools.ids import is_uuid
 from app.core.database import get_engine
-from app.services.review_summary_service import ReviewSummaryService
+
+POI_QUERY = """
+    SELECT p.id, p.nombre, p."puntuacionPromedio", p."cantidadReviews"
+    FROM public.pois p
+    JOIN public.estados_poi ep ON ep.id = p."estadoId"
+    WHERE ep.nombre = 'aprobado' AND {condition}
+    ORDER BY (lower(p.nombre) = lower(:poi)) DESC, p."cantidadReviews" DESC NULLS LAST
+    LIMIT 1
+"""
+
+REVIEWS_QUERY = """
+    SELECT r.comentario, v.puntuacion, r."fechaCreacion"
+    FROM public.reviews r
+    LEFT JOIN public.valoraciones v ON r.id = v."reviewId"
+    WHERE r."poiId" = :poi_id
+    ORDER BY r."fechaCreacion" DESC
+    LIMIT 5
+"""
+
+
+def find_poi(conn: Connection, poi: str) -> Optional[RowMapping]:
+    """Busca un POI aprobado por UUID o por nombre; el nombre exacto gana a las coincidencias parciales."""
+    condition = "p.id = CAST(:poi AS uuid)" if is_uuid(poi) else "p.nombre ILIKE :name"
+    params = {"poi": poi, "name": f"%{poi}%"}
+    return conn.execute(text(POI_QUERY.format(condition=condition)), params).mappings().first()
 
 
 @tool
-def get_poi_reviews_summary_tool(
-    poi_name: Optional[str] = None,
-    poi_id: Optional[str] = None,
-) -> Dict[str, Any]:
+def get_poi_reviews_summary_tool(poi: str) -> Dict[str, Any]:
     """
-    Obtiene opiniones, comentarios y resumen de reseñas de un atractivo o lugar en Mendoza.
+    Obtiene las opiniones recientes y la puntuación promedio de un atractivo o lugar en Mendoza.
     Parámetros:
-    - poi_name: Nombre o parte del nombre del lugar (ej. 'Bodega Catena Zapata', 'Aconcagua').
-    - poi_id: UUID del POI si se conoce con precisión.
+    - poi: UUID del lugar si lo tienes de un resultado anterior; si no, su nombre o parte del nombre (ej. 'Casa Vigil').
     """
-    engine = get_engine()
-    with engine.connect() as conn:
-        # Resolver POI ID si solo se pasó el nombre
-        target_poi_id = poi_id
-        poi_real_name = poi_name
+    with get_engine().connect() as conn:
+        found = find_poi(conn, poi)
+        if not found:
+            return {"error": f"No se encontró ningún lugar para '{poi}'."}
+        reviews = conn.execute(text(REVIEWS_QUERY), {"poi_id": found["id"]}).mappings().fetchall()
 
-        if not target_poi_id and poi_name:
-            row = conn.execute(
-                text("SELECT id, nombre FROM public.pois WHERE nombre ILIKE :name LIMIT 1"),
-                {"name": f"%{poi_name}%"},
-            ).first()
-            if row:
-                target_poi_id = str(row.id)
-                poi_real_name = row.nombre
-
-        if not target_poi_id:
-            return {"error": f"No se encontró ningún punto de interés con el nombre '{poi_name}'."}
-
-        # Traer últimas reviews
-        reviews_query = """
-            SELECT r.comentario, v.puntuacion, r."fechaCreacion"
-            FROM public.reviews r
-            LEFT JOIN public.valoraciones v ON r.id = v."reviewId"
-            WHERE r."poiId" = :poi_id
-            ORDER BY r."fechaCreacion" DESC
-            LIMIT 5
-        """
-        rows = conn.execute(text(reviews_query), {"poi_id": target_poi_id}).mappings().fetchall()
-        reviews = [dict(r) for r in rows]
-
-        return {
-            "poi_id": target_poi_id,
-            "poi_nombre": poi_real_name,
-            "cantidad_opiniones_analizadas": len(reviews),
-            "opiniones_recientes": reviews,
-        }
-
+    return {
+        "poi_id": str(found["id"]),
+        "poi_nombre": found["nombre"],
+        "puntuacion_promedio": found["puntuacionPromedio"],
+        "cantidad_reviews": found["cantidadReviews"],
+        "opiniones_recientes": [dict(r) for r in reviews],
+    }
