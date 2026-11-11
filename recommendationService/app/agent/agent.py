@@ -5,6 +5,7 @@ Ando Tourist Agent powered by LangChain and Tool Calling.
 from typing import Any, Dict, List, Optional
 
 from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.messages import AIMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from app.agent.memory import convert_chat_history_to_messages
@@ -61,7 +62,8 @@ class AndoTouristAgent:
             }
         )
 
+        # Claude devuelve bloques (thinking + text); .text() une solo los de texto y deja igual un str.
         return {
-            "output": result.get("output", ""),
-            "model_used": getattr(self.llm, "model_name", "groq-llama3"),
+            "output": AIMessage(content=result.get("output", "")).text(),
+            "model_used": getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "desconocido"),
         }
