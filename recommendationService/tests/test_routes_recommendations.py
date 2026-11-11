@@ -89,6 +89,7 @@ class TestRecommendationRoutes(unittest.TestCase):
                     "score": 0.88,
                     "reason": "Basado en tus valoraciones de 4★ y 5★ de Bodegas y visitas frecuentes.",
                     "ya_visitado": False,
+                    "departamento": "Luján de Cuyo",
                     "categorias": ["Bodegas", "Enoturismo"],
                     "precio_min": 15000,
                     "precio_max": 25000,

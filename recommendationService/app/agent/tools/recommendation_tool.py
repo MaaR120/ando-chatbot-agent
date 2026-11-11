@@ -1,48 +1,51 @@
 """
 LangChain Tool for personalized user recommendations.
-Wraps History and Collaborative scoring engines.
+Wraps the History scoring engine.
 """
-from typing import Optional, List, Dict, Any
+
+from typing import Any, Dict
+
 from langchain_core.tools import tool
+
 from app.core.database import get_session_factory
-from app.services.history_recommendation_service import HistoryRecommendationService
 from app.schemas.recommendation_history import HistoryRecommendationRequest
+from app.services.history_recommendation_service import HistoryRecommendationService
+
+MAX_LIMIT = 20
 
 
 @tool
 def get_personalized_recommendations_tool(
     user_id: str,
     limit: int = 5,
-) -> List[Dict[str, Any]]:
+) -> Dict[str, Any]:
     """
     Obtiene recomendaciones personalizadas basadas en el historial previo, favoritos y valoraciones del turista.
     Parámetros:
     - user_id: UUID del usuario en la base de datos de Ando.
-    - limit: Cantidad de recomendaciones deseadas (por defecto 5).
+    - limit: Cantidad de recomendaciones deseadas (por defecto 5, máximo 20).
     """
-    session_factory = get_session_factory()
-    db = session_factory()
-    try:
-        service = HistoryRecommendationService(db)
-        request = HistoryRecommendationRequest(user_id=user_id, limit=limit)
-        response = service.get_recommendations(request)
+    with get_session_factory()() as db:
+        request = HistoryRecommendationRequest(user_id=user_id, limit=min(limit, MAX_LIMIT))
+        response = HistoryRecommendationService(db).get_history_recommendations(request)
 
-        if not response or not response.recommendations:
-            return []
+    if not response.has_sufficient_history:
+        return {
+            "mensaje": "El usuario no tiene historial suficiente para recomendación personalizada. Usá search_pois_tool."
+        }
 
-        return [
+    return {
+        "recomendaciones": [
             {
-                "id": str(r.poi_id),
+                "id": r.poi_id,
                 "nombre": r.nombre,
-                "score": round(r.score, 3),
-                "motivo": r.motivo,
+                "motivo": r.reason,
                 "categorias": r.categorias,
+                "precio_min": r.precio_min,
+                "precio_max": r.precio_max,
+                "ya_visitado": r.ya_visitado,
                 "departamento": r.departamento,
             }
             for r in response.recommendations
         ]
-    except Exception as e:
-        return [{"error": f"No se pudieron calcular recomendaciones personalizadas: {str(e)}"}]
-    finally:
-        db.close()
-
+    }
