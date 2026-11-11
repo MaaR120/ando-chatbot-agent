@@ -1,35 +1,26 @@
 """
-Integration tests for get_personalized_recommendations_tool against the local database (init.sql seed).
+Integration tests for the personalized recommendations tool.
 """
 import unittest
 import uuid
 
-from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
-
-from app.agent.tools.recommendation_tool import MAX_LIMIT, get_personalized_recommendations_tool as tool
-from app.core.database import get_engine
-
-USER_WITH_HISTORY = "8addc001-3489-4811-b84f-4c7be7bfce02"
+from app.agent.tools.recommendation_tool import MAX_LIMIT, build_recommendation_tool
+from tests.live_db import USER_WITH_HISTORY, requires_db
 
 
-def database_available() -> bool:
-    try:
-        with get_engine().connect() as conn:
-            conn.execute(text("SELECT 1"))
-        return True
-    except OperationalError:
-        return False
+class TestRecommendationToolSchema(unittest.TestCase):
+    def test_llm_cannot_choose_the_user(self):
+        self.assertNotIn("user_id", build_recommendation_tool(USER_WITH_HISTORY).args)
 
 
-@unittest.skipUnless(database_available(), "requires the ando-agent-db Postgres container")
+@requires_db
 class TestRecommendationTool(unittest.TestCase):
     def test_user_without_history_gets_fallback_message(self):
-        result = tool.invoke({"user_id": str(uuid.uuid4())})
+        result = build_recommendation_tool(str(uuid.uuid4())).invoke({})
         self.assertIn("search_pois_tool", result["mensaje"])
 
     def test_user_with_history_gets_recommendations_with_department(self):
-        result = tool.invoke({"user_id": USER_WITH_HISTORY, "limit": 3})
+        result = build_recommendation_tool(USER_WITH_HISTORY).invoke({"limit": 3})
         recs = result["recomendaciones"]
         self.assertEqual(len(recs), 3)
         for rec in recs:
@@ -37,7 +28,7 @@ class TestRecommendationTool(unittest.TestCase):
             self.assertTrue(rec["motivo"])
 
     def test_limit_above_max_is_clamped(self):
-        result = tool.invoke({"user_id": USER_WITH_HISTORY, "limit": 100})
+        result = build_recommendation_tool(USER_WITH_HISTORY).invoke({"limit": 100})
         self.assertLessEqual(len(result["recomendaciones"]), MAX_LIMIT)
 
 
