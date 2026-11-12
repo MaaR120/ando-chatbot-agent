@@ -98,7 +98,8 @@ class HistoryRecommendationService:
             category_name_map=category_name_map,
         )
 
-        # 7. Formatear items de respuesta
+        # 7. Formatear items de respuesta. El engine solo puntúa; el departamento sale del candidato.
+        departamento_por_poi = {c["poi_id"]: c["departamento"] for c in candidate_pois}
         recommendations = [
             PoiRecommendationItem(
                 poi_id=r["poi_id"],
@@ -106,6 +107,7 @@ class HistoryRecommendationService:
                 score=r["score"],
                 reason=r["reason"],
                 ya_visitado=r["ya_visitado"],
+                departamento=departamento_por_poi[r["poi_id"]],
                 categorias=r.get("categorias", []),
                 precio_min=r.get("precio_min"),
                 precio_max=r.get("precio_max"),
@@ -226,12 +228,14 @@ class HistoryRecommendationService:
                 p."precioMax" AS precio_max,
                 p."puntuacionPromedio" AS puntuacion_promedio,
                 p."cantidadReviews" AS cantidad_reviews,
+                d.nombre AS departamento,
                 ARRAY_AGG(cp."categoriaId") FILTER (WHERE cp."categoriaId" IS NOT NULL) AS category_ids
             FROM pois p
             INNER JOIN estados_poi ep ON ep.id = p."estadoId"
+            INNER JOIN departamentos d ON d.id = p."departamentoId"
             LEFT JOIN categorias_poi cp ON cp."poiId" = p.id
             WHERE (LOWER(ep.nombre) = 'aprobado' OR ep.nombre = 'APROBADO')
-            GROUP BY p.id, p.nombre, p."precioMin", p."precioMax", p."puntuacionPromedio", p."cantidadReviews"
+            GROUP BY p.id, p.nombre, p."precioMin", p."precioMax", p."puntuacionPromedio", p."cantidadReviews", d.nombre
         """)
         rows = session.execute(sql_pois).mappings().all()
 
@@ -245,6 +249,7 @@ class HistoryRecommendationService:
                 "precio_max": float(row["precio_max"]) if row["precio_max"] is not None else None,
                 "puntuacion_promedio": float(row["puntuacion_promedio"]) if row["puntuacion_promedio"] is not None else 0.0,
                 "cantidad_reviews": int(row["cantidad_reviews"]) if row["cantidad_reviews"] is not None else 0,
+                "departamento": str(row["departamento"]),
                 "category_ids": [str(c) for c in (row["category_ids"] or []) if c],
             })
 

@@ -29,6 +29,7 @@ class PoiRecommendationItem(BaseModel):
     reason: str = Field(..., description="Justificación explicable determinística de la recomendación")
     subscores: ExplanationSubscores = Field(..., description="Desglose numérico de todos los componentes del score")
     ya_visitado: bool = Field(default=False, description="Indica si el POI ya fue visitado en algún itinerario finalizado")
+    departamento: str = Field(..., description="Nombre del departamento de Mendoza donde está el POI")
     categorias: List[str] = Field(default_factory=list, description="Nombres o IDs de categorías del POI")
     precio_min: Optional[float] = Field(default=None, description="Precio mínimo del POI")
     precio_max: Optional[float] = Field(default=None, description="Precio máximo del POI")

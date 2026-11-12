@@ -1,10 +1,13 @@
 """
 LangChain Tourist Agent Endpoints.
 """
+import logging
+
 from fastapi import APIRouter, HTTPException, status
 from app.schemas.agent import AgentChatRequest, AgentChatResponse
 from app.agent.agent import AndoTouristAgent
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 
@@ -21,19 +24,20 @@ router = APIRouter(prefix="/agent", tags=["agent"])
 )
 def agent_chat_endpoint(payload: AgentChatRequest) -> AgentChatResponse:
     try:
-        agent = AndoTouristAgent()
+        agent = AndoTouristAgent(user_id=payload.user_id)
         result = agent.run(
             message=payload.message,
             chat_history=payload.history,
-            user_id=payload.user_id,
         )
         return AgentChatResponse(
             response=result["output"],
             model_used=result["model_used"],
         )
-    except Exception as e:
+    except Exception:
+        # El detalle (SQL, trazas del proveedor LLM) va al log, nunca al cliente.
+        logger.exception("Error al procesar mensaje con el agente")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al procesar mensaje con el agente: {str(e)}",
+            detail="Error al procesar el mensaje. Intentá de nuevo más tarde.",
         )
 
