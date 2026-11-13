@@ -14,6 +14,44 @@ from app.agent.tools import build_agent_tools
 from app.core.llm_factory import get_chat_llm
 
 
+def _is_thinking(block: Any) -> bool:
+    return isinstance(block, dict) and block.get("type") == "thinking"
+
+
+def _thinking(content: Any) -> List[str]:
+    """Texto de los bloques thinking de Claude. Un str itera caracteres, que no son dict: da []."""
+    return [b.get("thinking", "") for b in content if _is_thinking(b)]
+
+
+def _join(parts: List[Optional[str]]) -> Optional[str]:
+    return "\n\n".join(filter(None, (p.strip() for p in filter(None, parts)))) or None
+
+
+def _step_reasoning(action: Any) -> Optional[str]:
+    """Razonamiento previo a la llamada. No usa action.log: trae los bloques crudos (firmas, tool_use)."""
+    parts: List[str] = []
+    for message in getattr(action, "message_log", []):
+        parts += _thinking(message.content) + [message.text()]
+    return _join(parts)
+
+
+def _steps(raw_steps: List[Any]) -> List[Dict[str, Any]]:
+    return [
+        {
+            "tool": getattr(action, "tool", ""),
+            "input": getattr(action, "tool_input", {}),
+            "thought": _step_reasoning(action),
+            "output": observation,
+        }
+        for action, observation in raw_steps
+    ]
+
+
+def _summary(raw_output: Any, steps: List[Dict[str, Any]]) -> Optional[str]:
+    """Thinking de la respuesta final; si no hay, el razonamiento de cada paso."""
+    return _join(_thinking(raw_output)) or _join([s["thought"] for s in steps])
+
+
 class AndoTouristAgent:
     """
     Agente conversacional turístico de Mendoza.
@@ -66,37 +104,12 @@ class AndoTouristAgent:
         raw_output = result.get("output", "")
         raw_steps = result.get("intermediate_steps", [])
 
-        # Extraer bloques de pensamiento nativo (ej. Claude thinking blocks)
-        thoughts = []
-        if isinstance(raw_output, list):
-            for block in raw_output:
-                if isinstance(block, dict) and block.get("type") == "thinking":
-                    thoughts.append(block.get("thinking", ""))
-
-        steps_data = []
-        for action, observation in raw_steps:
-            tool_name = getattr(action, "tool", "")
-            tool_input = getattr(action, "tool_input", {})
-            log = getattr(action, "log", "")
-            steps_data.append(
-                {
-                    "tool": tool_name,
-                    "input": tool_input,
-                    "thought": log.strip() if log else None,
-                    "output": observation,
-                }
-            )
-
-        thought_summary = "\n\n".join(thoughts) if thoughts else None
-        if not thought_summary and steps_data:
-            action_thoughts = [s["thought"] for s in steps_data if s["thought"]]
-            if action_thoughts:
-                thought_summary = "\n".join(action_thoughts)
+        steps_data = _steps(raw_steps)
 
         # Claude devuelve bloques (thinking + text); .text() une solo los de texto y deja igual un str.
         return {
             "output": AIMessage(content=raw_output).text(),
             "model_used": getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "desconocido"),
-            "thought": thought_summary,
+            "thought": _summary(raw_output, steps_data),
             "steps": steps_data,
         }
