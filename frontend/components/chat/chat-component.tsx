@@ -10,9 +10,18 @@ import {
   CirclePlusIcon,
   AiSparklesIcon,
   Wrench01Icon,
+  Copy01Icon,
+  Tick02Icon,
 } from "@hugeicons/core-free-icons";
 
+import { Markdown } from "@/components/chat/markdown";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   InputGroup,
   InputGroupAddon,
@@ -20,7 +29,11 @@ import {
   InputGroupTextarea,
 } from "@/components/ui/input-group";
 
-import { Message, MessageContent } from "@/components/ui/message";
+import {
+  Message,
+  MessageContent,
+  MessageFooter,
+} from "@/components/ui/message";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -58,20 +71,26 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const DEMO_USER_ID = "8addc001-3489-4811-b84f-4c7be7bfce02";
 
 async function fetchConversations(): Promise<Conversation[]> {
-  const res = await fetch(`${API_BASE_URL}/agent/conversations?user_id=${DEMO_USER_ID}`, {
-    cache: "no-store",
-  });
+  const res = await fetch(
+    `${API_BASE_URL}/agent/conversations?user_id=${DEMO_USER_ID}`,
+    {
+      cache: "no-store",
+    },
+  );
   if (!res.ok) return [];
   return res.json();
 }
 
-async function fetchConversationMessages(conversationId: string): Promise<ChatMessage[]> {
+async function fetchConversationMessages(
+  conversationId: string,
+): Promise<ChatMessage[]> {
   const res = await fetch(
     `${API_BASE_URL}/agent/conversations/${conversationId}/messages?user_id=${DEMO_USER_ID}`,
-    { cache: "no-store" }
+    { cache: "no-store" },
   );
   if (!res.ok) return [];
-  const data: Array<{ id: string; rol: string; contenido: string }> = await res.json();
+  const data: Array<{ id: string; rol: string; contenido: string }> =
+    await res.json();
   return data.map((m) => ({
     id: m.id,
     role: m.rol === "usuario" || m.rol === "user" ? "user" : "assistant",
@@ -82,7 +101,7 @@ async function fetchConversationMessages(conversationId: string): Promise<ChatMe
 async function removeConversation(conversationId: string): Promise<boolean> {
   const res = await fetch(
     `${API_BASE_URL}/agent/conversations/${conversationId}?user_id=${DEMO_USER_ID}`,
-    { method: "DELETE" }
+    { method: "DELETE" },
   );
   return res.ok;
 }
@@ -90,7 +109,7 @@ async function removeConversation(conversationId: string): Promise<boolean> {
 async function replyToAgent(
   text: string,
   history: ChatMessage[],
-  conversationId: string | null
+  conversationId: string | null,
 ): Promise<{
   answer: string;
   newConversationId?: string;
@@ -161,7 +180,9 @@ function ToolCallsDisclosure({
             </span>
           )}
         </div>
-        <span className="text-[10px] text-zinc-500 font-sans ml-2">{open ? "Ocultar ▲" : "Ver proceso ▼"}</span>
+        <span className="text-[10px] text-zinc-500 font-sans ml-2">
+          {open ? "Ocultar ▲" : "Ver proceso ▼"}
+        </span>
       </button>
 
       {open && (
@@ -191,21 +212,29 @@ function ToolCallsDisclosure({
                   className="rounded-lg border border-zinc-800/60 bg-zinc-900/50 p-2.5 space-y-1.5"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-emerald-300">🔧 {s.tool}</span>
+                    <span className="font-bold text-emerald-300">
+                      🔧 {s.tool}
+                    </span>
                   </div>
 
                   {s.thought && (
                     <div className="text-zinc-400 text-[10px]">
-                      <span className="text-zinc-500 font-semibold">Motivo: </span>
+                      <span className="text-zinc-500 font-semibold">
+                        Motivo:{" "}
+                      </span>
                       {s.thought}
                     </div>
                   )}
 
                   {s.input !== undefined && s.input !== null && (
                     <div className="text-[10px]">
-                      <span className="text-zinc-500 font-semibold">Parámetros: </span>
+                      <span className="text-zinc-500 font-semibold">
+                        Parámetros:{" "}
+                      </span>
                       <code className="text-zinc-300 bg-zinc-950/80 px-1 py-0.5 rounded break-all">
-                        {typeof s.input === "string" ? s.input : JSON.stringify(s.input)}
+                        {typeof s.input === "string"
+                          ? s.input
+                          : JSON.stringify(s.input)}
                       </code>
                     </div>
                   )}
@@ -232,9 +261,45 @@ function ToolCallsDisclosure({
   );
 }
 
+function CopyAction({ text }: { text: string }) {
+  const [copied, setCopied] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!copied) return;
+    const timeout = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(timeout);
+  }, [copied]);
+
+  const label = copied ? "Copiado" : "Copiar";
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={label}
+            onClick={() =>
+              navigator.clipboard.writeText(text).then(() => setCopied(true))
+            }
+          />
+        }
+      >
+        <HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} />
+      </TooltipTrigger>
+      <TooltipContent>
+        <p>{label}</p>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function ChatComponent() {
   const [conversations, setConversations] = React.useState<Conversation[]>([]);
-  const [currentConversationId, setCurrentConversationId] = React.useState<string | null>(null);
+  const [currentConversationId, setCurrentConversationId] = React.useState<
+    string | null
+  >(null);
   const [messages, setMessages] = React.useState<ChatMessage[]>([]);
   const [draft, setDraft] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -321,7 +386,10 @@ export function ChatComponent() {
 
     try {
       const result = await replyToAgent(text, messages, currentConversationId);
-      if (result.newConversationId && result.newConversationId !== currentConversationId) {
+      if (
+        result.newConversationId &&
+        result.newConversationId !== currentConversationId
+      ) {
         setCurrentConversationId(result.newConversationId);
         refreshConversations();
       }
@@ -338,7 +406,9 @@ export function ChatComponent() {
       ]);
     } catch (err: unknown) {
       const errorMessage =
-        err instanceof Error ? err.message : "No pude responder. Probá de nuevo.";
+        err instanceof Error
+          ? err.message
+          : "No pude responder. Probá de nuevo.";
       setMessages((prev) => [
         ...prev,
         {
@@ -353,7 +423,8 @@ export function ChatComponent() {
   }
 
   const currentTitle =
-    conversations.find((c) => c.id === currentConversationId)?.titulo || "Nueva conversación";
+    conversations.find((c) => c.id === currentConversationId)?.titulo ||
+    "Nueva conversación";
 
   return (
     <div className="flex h-full w-full overflow-hidden">
@@ -430,7 +501,9 @@ export function ChatComponent() {
               M
             </div>
             <div className="truncate">
-              <p className="text-[11px] font-medium text-zinc-200 leading-tight">Martina Luconi</p>
+              <p className="text-[11px] font-medium text-zinc-200 leading-tight">
+                Martina Luconi
+              </p>
               <p className="text-[10px] text-zinc-500">Mendoza, AR</p>
             </div>
           </div>
@@ -469,13 +542,19 @@ export function ChatComponent() {
               <div className="min-h-0 flex-1">
                 <MessageScroller>
                   <MessageScrollerViewport>
-                    <MessageScrollerContent aria-busy={busy} className="gap-4 px-4 pt-4">
+                    <MessageScrollerContent
+                      aria-busy={busy}
+                      className="gap-4 px-4 pt-4"
+                    >
                       {messages.length === 0 && (
                         <div className="flex flex-col items-center justify-center py-20 text-center text-zinc-500">
-                          <p className="text-sm font-medium text-zinc-300">¡Hola, Martina!</p>
+                          <p className="text-sm font-medium text-zinc-300">
+                            ¡Hola, Martina!
+                          </p>
                           <p className="text-xs text-zinc-500 mt-1 max-w-sm">
-                            ¿En qué puedo ayudarte hoy? Pregúntame sobre bodegas en Mendoza, restaurantes,
-                            itinerarios o actividades de aventura.
+                            ¿En qué puedo ayudarte hoy? Pregúntame sobre bodegas
+                            en Mendoza, restaurantes, itinerarios o actividades
+                            de aventura.
                           </p>
                         </div>
                       )}
@@ -486,21 +565,30 @@ export function ChatComponent() {
                           messageId={m.id}
                           scrollAnchor={m.role === "user"}
                         >
-                          <Message align={m.role === "user" ? "end" : "start"}>
-                            <MessageContent>
-                              {m.role === "assistant" && (
-                                <ToolCallsDisclosure thought={m.thought} steps={m.steps} />
-                              )}
-                              <Bubble
-                                align={m.role === "user" ? "end" : "start"}
-                                variant={m.role === "user" ? "muted" : "ghost"}
-                              >
-                                <BubbleContent className="whitespace-pre-wrap leading-relaxed">
-                                  {m.text}
-                                </BubbleContent>
-                              </Bubble>
-                            </MessageContent>
-                          </Message>
+                          {m.role === "user" ? (
+                            <Message align="end">
+                              <MessageContent>
+                                <Bubble align="end" variant="muted">
+                                  <BubbleContent className="whitespace-pre-wrap leading-relaxed">
+                                    {m.text}
+                                  </BubbleContent>
+                                </Bubble>
+                              </MessageContent>
+                            </Message>
+                          ) : (
+                            <Message>
+                              <MessageContent className="gap-2 text-sm">
+                                <ToolCallsDisclosure
+                                  thought={m.thought}
+                                  steps={m.steps}
+                                />
+                                <Markdown>{m.text}</Markdown>
+                                <MessageFooter className="px-0">
+                                  <CopyAction text={m.text} />
+                                </MessageFooter>
+                              </MessageContent>
+                            </Message>
+                          )}
                         </MessageScrollerItem>
                       ))}
 
@@ -509,7 +597,10 @@ export function ChatComponent() {
                           <MessageContent>
                             <div className="flex items-center gap-2.5 rounded-xl border border-zinc-800/80 bg-zinc-900/40 px-3.5 py-2 text-xs text-zinc-400 backdrop-blur animate-pulse font-mono text-[11px]">
                               <span className="flex h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
-                              <span>Pensando y consultando herramientas de Mendoza...</span>
+                              <span>
+                                Pensando y consultando herramientas de
+                                Mendoza...
+                              </span>
                             </div>
                           </MessageContent>
                         </Message>

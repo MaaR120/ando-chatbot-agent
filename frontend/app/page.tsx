@@ -1,17 +1,22 @@
+import { AsciiOcean } from "@/components/sharks/react";
 import Link from "next/link";
 
 export default function Home() {
   return (
     <main className="flex flex-1 flex-col items-center justify-center gap-6 px-16 text-center">
       <div className="space-y-2">
+        <AsciiOcean className="fixed inset-0 -z-10 h-screen w-screen font-mono" />
         <h1 className="text-4xl font-bold tracking-tight text-zinc-50 sm:text-6xl">
           ANDO
         </h1>
-        <h2 className="text-lg text-zinc-400 sm:text-xl">¿Hacia dónde vamos?</h2>
+        <h2 className="text-lg text-zinc-400 sm:text-xl">
+          ¿Hacia dónde vamos?
+        </h2>
       </div>
 
       <p className="max-w-md text-sm text-zinc-500">
-        Tu asistente turístico inteligente para descubrir bodegas, gastronomía, naturaleza y actividades en Mendoza.
+        Tu asistente turístico inteligente para descubrir bodegas, gastronomía,
+        naturaleza y actividades en Mendoza.
       </p>
 
       <Link
