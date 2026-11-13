@@ -42,6 +42,7 @@ class AndoTouristAgent:
             verbose=True,
             handle_parsing_errors=True,
             max_iterations=5,
+            return_intermediate_steps=True,
         )
 
     def run(
@@ -62,8 +63,40 @@ class AndoTouristAgent:
             }
         )
 
+        raw_output = result.get("output", "")
+        raw_steps = result.get("intermediate_steps", [])
+
+        # Extraer bloques de pensamiento nativo (ej. Claude thinking blocks)
+        thoughts = []
+        if isinstance(raw_output, list):
+            for block in raw_output:
+                if isinstance(block, dict) and block.get("type") == "thinking":
+                    thoughts.append(block.get("thinking", ""))
+
+        steps_data = []
+        for action, observation in raw_steps:
+            tool_name = getattr(action, "tool", "")
+            tool_input = getattr(action, "tool_input", {})
+            log = getattr(action, "log", "")
+            steps_data.append(
+                {
+                    "tool": tool_name,
+                    "input": tool_input,
+                    "thought": log.strip() if log else None,
+                    "output": observation,
+                }
+            )
+
+        thought_summary = "\n\n".join(thoughts) if thoughts else None
+        if not thought_summary and steps_data:
+            action_thoughts = [s["thought"] for s in steps_data if s["thought"]]
+            if action_thoughts:
+                thought_summary = "\n".join(action_thoughts)
+
         # Claude devuelve bloques (thinking + text); .text() une solo los de texto y deja igual un str.
         return {
-            "output": AIMessage(content=result.get("output", "")).text(),
+            "output": AIMessage(content=raw_output).text(),
             "model_used": getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "desconocido"),
+            "thought": thought_summary,
+            "steps": steps_data,
         }

@@ -1,9 +1,16 @@
 """
 Pydantic Schemas for the LangChain Agent.
 """
-from typing import List, Optional
+from typing import Any, List, Optional
 from pydantic import BaseModel, Field
 from app.schemas.assistant import ChatMessageItem
+
+
+class ToolCallStep(BaseModel):
+    tool: str = Field(..., description="Nombre de la herramienta ejecutada")
+    input: Any = Field(default=None, description="Parámetros enviados a la herramienta")
+    thought: Optional[str] = Field(default=None, description="Razonamiento o log del agente previo a la llamada")
+    output: Optional[Any] = Field(default=None, description="Resultado devuelto por la herramienta")
 
 
 class AgentChatRequest(BaseModel):
@@ -17,6 +24,8 @@ class AgentChatResponse(BaseModel):
     response: str = Field(..., description="Respuesta conversacional generada por el agente")
     model_used: str = Field(default="groq-llama-3.3-70b", description="Nombre del modelo ejecutado")
     conversation_id: Optional[str] = Field(default=None, description="UUID de la conversación en base de datos")
+    thought: Optional[str] = Field(default=None, description="Razonamiento interno o pensamiento de la IA")
+    steps: List[ToolCallStep] = Field(default_factory=list, description="Herramientas invocadas con sus argumentos y respuestas")
 
 
 class ConversationItem(BaseModel):

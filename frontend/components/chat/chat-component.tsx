@@ -8,6 +8,8 @@ import {
   Delete02Icon,
   Comment01Icon,
   CirclePlusIcon,
+  AiSparklesIcon,
+  Wrench01Icon,
 } from "@hugeicons/core-free-icons";
 
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
@@ -28,7 +30,20 @@ import {
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
 
-type ChatMessage = { id: string; role: "user" | "assistant"; text: string };
+export type ToolCallStep = {
+  tool: string;
+  input: unknown;
+  thought?: string | null;
+  output?: unknown;
+};
+
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  thought?: string | null;
+  steps?: ToolCallStep[];
+};
 
 type Conversation = {
   id: string;
@@ -76,7 +91,12 @@ async function replyToAgent(
   text: string,
   history: ChatMessage[],
   conversationId: string | null
-): Promise<{ answer: string; newConversationId?: string }> {
+): Promise<{
+  answer: string;
+  newConversationId?: string;
+  thought?: string | null;
+  steps?: ToolCallStep[];
+}> {
   const formattedHistory = history.map((m) => ({
     rol: m.role === "user" ? "usuario" : "asistente",
     contenido: m.text,
@@ -104,7 +124,112 @@ async function replyToAgent(
   return {
     answer: data.response,
     newConversationId: data.conversation_id,
+    thought: data.thought,
+    steps: data.steps,
   };
+}
+
+function ToolCallsDisclosure({
+  thought,
+  steps,
+}: {
+  thought?: string | null;
+  steps?: ToolCallStep[];
+}) {
+  const [open, setOpen] = React.useState(false);
+  const totalSteps = steps?.length || 0;
+
+  if (!thought && (!steps || steps.length === 0)) return null;
+
+  return (
+    <div className="mb-2 w-full max-w-2xl overflow-hidden rounded-xl border border-zinc-800/80 bg-zinc-950/70 text-xs shadow-sm backdrop-blur">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex w-full items-center justify-between px-3 py-2 text-left font-mono text-[11px] text-zinc-400 transition-colors hover:bg-zinc-900/60 hover:text-zinc-200"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
+          <span className="font-semibold text-zinc-300">
+            {totalSteps > 0
+              ? `Razonamiento & ${totalSteps} ${totalSteps === 1 ? "herramienta" : "herramientas"}`
+              : "Proceso de pensamiento"}
+          </span>
+          {steps && steps.length > 0 && (
+            <span className="rounded bg-zinc-800/80 px-1.5 py-0.5 text-[10px] text-zinc-300">
+              {steps.map((s) => s.tool).join(", ")}
+            </span>
+          )}
+        </div>
+        <span className="text-[10px] text-zinc-500 font-sans ml-2">{open ? "Ocultar ▲" : "Ver proceso ▼"}</span>
+      </button>
+
+      {open && (
+        <div className="space-y-3 border-t border-zinc-800/60 p-3 font-mono text-[11px]">
+          {thought && (
+            <div>
+              <div className="mb-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                <HugeiconsIcon icon={AiSparklesIcon} size={12} />
+                <span>Pensamiento de la IA</span>
+              </div>
+              <div className="rounded-lg bg-zinc-900/80 p-2.5 text-zinc-300 whitespace-pre-wrap leading-relaxed">
+                {thought}
+              </div>
+            </div>
+          )}
+
+          {steps && steps.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                <HugeiconsIcon icon={Wrench01Icon} size={12} />
+                <span>Herramientas invocadas</span>
+              </div>
+
+              {steps.map((s, idx) => (
+                <div
+                  key={idx}
+                  className="rounded-lg border border-zinc-800/60 bg-zinc-900/50 p-2.5 space-y-1.5"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-emerald-300">🔧 {s.tool}</span>
+                  </div>
+
+                  {s.thought && (
+                    <div className="text-zinc-400 text-[10px]">
+                      <span className="text-zinc-500 font-semibold">Motivo: </span>
+                      {s.thought}
+                    </div>
+                  )}
+
+                  {s.input !== undefined && s.input !== null && (
+                    <div className="text-[10px]">
+                      <span className="text-zinc-500 font-semibold">Parámetros: </span>
+                      <code className="text-zinc-300 bg-zinc-950/80 px-1 py-0.5 rounded break-all">
+                        {typeof s.input === "string" ? s.input : JSON.stringify(s.input)}
+                      </code>
+                    </div>
+                  )}
+
+                  {s.output !== undefined && s.output !== null && (
+                    <details className="mt-1 text-[10px]">
+                      <summary className="cursor-pointer text-zinc-500 hover:text-zinc-300 select-none">
+                        Ver datos devueltos por la BD...
+                      </summary>
+                      <pre className="mt-1 max-h-36 overflow-y-auto rounded bg-zinc-950/90 p-2 text-[10px] text-zinc-300 whitespace-pre-wrap">
+                        {typeof s.output === "string"
+                          ? s.output
+                          : JSON.stringify(s.output, null, 2)}
+                      </pre>
+                    </details>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ChatComponent() {
@@ -203,7 +328,13 @@ export function ChatComponent() {
 
       setMessages((prev) => [
         ...prev,
-        { id: newId(), role: "assistant", text: result.answer },
+        {
+          id: newId(),
+          role: "assistant",
+          text: result.answer,
+          thought: result.thought,
+          steps: result.steps,
+        },
       ]);
     } catch (err: unknown) {
       const errorMessage =
@@ -357,6 +488,9 @@ export function ChatComponent() {
                         >
                           <Message align={m.role === "user" ? "end" : "start"}>
                             <MessageContent>
+                              {m.role === "assistant" && (
+                                <ToolCallsDisclosure thought={m.thought} steps={m.steps} />
+                              )}
                               <Bubble
                                 align={m.role === "user" ? "end" : "start"}
                                 variant={m.role === "user" ? "muted" : "ghost"}
@@ -369,6 +503,17 @@ export function ChatComponent() {
                           </Message>
                         </MessageScrollerItem>
                       ))}
+
+                      {busy && (
+                        <Message align="start">
+                          <MessageContent>
+                            <div className="flex items-center gap-2.5 rounded-xl border border-zinc-800/80 bg-zinc-900/40 px-3.5 py-2 text-xs text-zinc-400 backdrop-blur animate-pulse font-mono text-[11px]">
+                              <span className="flex h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
+                              <span>Pensando y consultando herramientas de Mendoza...</span>
+                            </div>
+                          </MessageContent>
+                        </Message>
+                      )}
                     </MessageScrollerContent>
                   </MessageScrollerViewport>
                   <MessageScrollerButton />

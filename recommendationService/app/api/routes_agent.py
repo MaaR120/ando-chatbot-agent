@@ -168,6 +168,8 @@ def agent_chat_endpoint(payload: AgentChatRequest) -> AgentChatResponse:
             response=response_text,
             model_used=model_used,
             conversation_id=conv_id,
+            thought=result.get("thought"),
+            steps=result.get("steps", []),
         )
     except Exception:
         # El detalle (SQL, trazas del proveedor LLM) va al log, nunca al cliente.
