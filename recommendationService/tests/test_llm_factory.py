@@ -19,6 +19,8 @@ class TestLlmFactory(unittest.TestCase):
         self.assertIsInstance(llm, ChatAnthropic)
         self.assertEqual(llm.model, "claude-haiku-5-5")
         self.assertIsNone(llm.temperature)
+        # Con 1024 el thinking agotaba el presupuesto y la respuesta final salía vacía.
+        self.assertGreater(llm.max_tokens, 1024)
 
     @patch.multiple(settings, llm_provider="groq", llm_model="llama-3.3-70b-versatile", groq_api_key="test-key")
     def test_provider_selects_groq_even_with_other_keys(self):
