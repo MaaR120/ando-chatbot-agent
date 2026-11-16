@@ -160,6 +160,7 @@ def agent_chat_endpoint(payload: AgentChatRequest) -> AgentChatResponse:
                     conversation_id=conv_id,
                     role="asistente",
                     content=response_text,
+                    reasoning={"thought": result.get("thought"), "steps": result.get("steps", [])},
                 )
             except Exception:
                 logger.warning("No se pudieron guardar los mensajes en la BD.")

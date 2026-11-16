@@ -379,6 +379,7 @@ CREATE TABLE IF NOT EXISTS public."mensajes_ia" (
   "contenido" text NOT NULL,
   "fechaCreacion" timestamp with time zone DEFAULT now() NOT NULL,
   "tokensUsados" integer DEFAULT 0 NOT NULL,
+  "razonamiento" jsonb,
   CONSTRAINT "PK_mensajes_ia" PRIMARY KEY (id)
 );
 

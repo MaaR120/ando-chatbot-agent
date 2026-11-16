@@ -47,6 +47,20 @@ class TestChatHistoryService(unittest.TestCase):
         self.assertTrue(len(found) == 1)
         self.assertEqual(found[0]["cantidad_mensajes"], 2)
 
+    def test_reasoning_persists_with_assistant_message(self):
+        conv_id = self.service.get_or_create_conversation(title="Prueba de razonamiento")
+        self.created_conv_ids.append(conv_id)
+        steps = [{"tool": "search_pois_tool", "input": {"query": "bodega"}, "thought": "Busco bodegas", "output": [{"nombre": "Trapiche"}]}]
+
+        self.service.add_message(conv_id, "usuario", "Bodegas en Maipú")
+        self.service.add_message(conv_id, "asistente", "Trapiche.", reasoning={"thought": "Plan de un día", "steps": steps})
+
+        user_msg, assistant_msg = self.service.get_conversation_messages(conv_id)
+        self.assertIsNone(user_msg["thought"])
+        self.assertEqual(user_msg["steps"], [])
+        self.assertEqual(assistant_msg["thought"], "Plan de un día")
+        self.assertEqual(assistant_msg["steps"], steps)
+
     def test_delete_conversation(self):
         conv_id = self.service.get_or_create_conversation(title="Conversación para borrar")
         self.service.add_message(conv_id, "usuario", "Mensaje de prueba")
