@@ -35,13 +35,12 @@ def _openai(model: str, temperature: float, streaming: bool) -> BaseChatModel:
 def _anthropic(model: str, temperature: float, streaming: bool) -> BaseChatModel:
     from langchain_anthropic import ChatAnthropic
 
-    # Sin temperature: los modelos Claude 5.x lo rechazan (400 "temperature is deprecated").
-    # max_tokens: con el default (1024) el thinking agota el presupuesto y la respuesta final queda sin texto.
     return ChatAnthropic(
         model=model,
         api_key=settings.anthropic_api_key,
         streaming=streaming,
-        max_tokens=16000,
+        max_tokens=128000,
+        thinking={"type": "adaptive", "display": "summarized"},
     )
 
 
