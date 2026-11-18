@@ -246,6 +246,23 @@ function ToolCallsDisclosure({
   );
 }
 
+type PdfOutput = { file_id: string; filename: string };
+
+function PdfDownloads({ steps }: { steps?: ToolCallStep[] | null }) {
+  const pdfs = (steps ?? [])
+    .filter((s) => s.tool === "generar_pdf")
+    .map((s) => s.output as PdfOutput);
+  return pdfs.map((p) => (
+    <a
+      key={p.file_id}
+      href={`${API_BASE_URL}/agent/pdfs/${p.file_id}?filename=${encodeURIComponent(p.filename)}`}
+      className="w-fit rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-zinc-900 shadow-sm transition-colors hover:bg-zinc-200"
+    >
+      Descargar {p.filename}
+    </a>
+  ));
+}
+
 function CopyAction({ text }: { text: string }) {
   const [copied, setCopied] = React.useState(false);
 
@@ -568,6 +585,7 @@ export function ChatComponent() {
                                   steps={m.steps}
                                 />
                                 <Markdown>{m.text}</Markdown>
+                                <PdfDownloads steps={m.steps} />
                                 <MessageFooter className="px-0">
                                   <CopyAction text={m.text} />
                                 </MessageFooter>
