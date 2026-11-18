@@ -5,3 +5,4 @@ __pycache__/
 .env
 .venv/*
 .ruff_cache/
+recommendationService/generated_pdfs/

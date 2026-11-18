@@ -1,10 +1,16 @@
 """
 LangChain Tourist Agent Endpoints with Conversation History.
 """
+
 import logging
+import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import FileResponse
+
+from app.agent.agent import AndoTouristAgent
+from app.agent.tools.pdf import PDF_DIR
 from app.schemas.agent import (
     AgentChatRequest,
     AgentChatResponse,
@@ -12,10 +18,9 @@ from app.schemas.agent import (
     ConversationMessageItem,
 )
 from app.schemas.assistant import ChatMessageItem
-from app.agent.agent import AndoTouristAgent
 from app.services.chat_history_service import (
-    ChatHistoryService,
     DEFAULT_DEMO_USER_ID,
+    ChatHistoryService,
 )
 
 logger = logging.getLogger(__name__)
@@ -122,7 +127,9 @@ def agent_chat_endpoint(payload: AgentChatRequest) -> AgentChatResponse:
             existing_msgs = history_service.get_conversation_messages(conv_id)
             is_first_message = len(existing_msgs) == 0
         except Exception:
-            logger.warning("No se pudo acceder a la BD para persistir la conversación. Continuando sin persistencia.")
+            logger.warning(
+                "No se pudo acceder a la BD para persistir la conversación. Continuando sin persistencia."
+            )
             conv_id = payload.conversation_id
 
         # 2. Reconstruir historial si no vino en el payload pero existe en la BD
@@ -160,7 +167,10 @@ def agent_chat_endpoint(payload: AgentChatRequest) -> AgentChatResponse:
                     conversation_id=conv_id,
                     role="asistente",
                     content=response_text,
-                    reasoning={"thought": result.get("thought"), "steps": result.get("steps", [])},
+                    reasoning={
+                        "thought": result.get("thought"),
+                        "steps": result.get("steps", []),
+                    },
                 )
             except Exception:
                 logger.warning("No se pudieron guardar los mensajes en la BD.")
@@ -179,3 +189,11 @@ def agent_chat_endpoint(payload: AgentChatRequest) -> AgentChatResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error al procesar el mensaje. Intentá de nuevo más tarde.",
         )
+
+
+@router.get("/pdfs/{file_id}", summary="Descargar un PDF generado por el agente")
+def download_pdf(file_id: uuid.UUID, filename: str = "itinerario.pdf") -> FileResponse:
+    path = PDF_DIR / f"{file_id}.pdf"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="PDF no encontrado.")
+    return FileResponse(path, media_type="application/pdf", filename=filename)
