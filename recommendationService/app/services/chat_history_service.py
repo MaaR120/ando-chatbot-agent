@@ -13,6 +13,18 @@ logger = logging.getLogger(__name__)
 DEFAULT_DEMO_USER_ID = "8addc001-3489-4811-b84f-4c7be7bfce02"
 
 
+def _message_from_row(row: Any) -> Dict[str, Any]:
+    reasoning = row["razonamiento"] or {}
+    return {
+        "id": str(row["id"]),
+        "rol": row["rol"],
+        "contenido": row["contenido"],
+        "fecha_creacion": row["fecha_creacion"].isoformat() if row["fecha_creacion"] else "",
+        "thought": reasoning.get("thought"),
+        "steps": reasoning.get("steps", []),
+    }
+
+
 class ChatHistoryService:
     def __init__(self, user_id: Optional[str] = None):
         self.user_id = user_id or DEFAULT_DEMO_USER_ID
@@ -89,6 +101,7 @@ class ChatHistoryService:
                 m.id,
                 m.rol,
                 m.contenido,
+                m.razonamiento,
                 m."fechaCreacion" AS fecha_creacion
             FROM public.mensajes_ia m
             JOIN public.conversaciones_ia c ON m."conversacionId" = c.id
@@ -97,15 +110,7 @@ class ChatHistoryService:
         """)
         with self.engine.connect() as conn:
             rows = conn.execute(query, {"conv_id": conversation_id, "user_id": self.user_id}).mappings().fetchall()
-            return [
-                {
-                    "id": str(r["id"]),
-                    "rol": r["rol"],
-                    "contenido": r["contenido"],
-                    "fecha_creacion": r["fecha_creacion"].isoformat() if r["fecha_creacion"] else "",
-                }
-                for r in rows
-            ]
+            return [_message_from_row(r) for r in rows]
 
     def add_message(
         self,
@@ -114,20 +119,24 @@ class ChatHistoryService:
         content: str,
         tokens_used: int = 0,
         update_title_if_first: bool = False,
+        reasoning: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Agrega un mensaje a la conversación y actualiza los contadores.
+        `reasoning` guarda el pensamiento y las herramientas del agente ({"thought", "steps"}).
         """
         with self.engine.begin() as conn:
             insert_msg = text("""
-                INSERT INTO public.mensajes_ia ("conversacionId", "rol", "contenido", "tokensUsados")
-                VALUES (:conv_id, :rol, :contenido, :tokens)
+                INSERT INTO public.mensajes_ia ("conversacionId", "rol", "contenido", "tokensUsados", "razonamiento")
+                VALUES (:conv_id, :rol, :contenido, :tokens, CAST(:razonamiento AS jsonb))
             """)
             conn.execute(insert_msg, {
                 "conv_id": conversation_id,
                 "rol": role,
                 "contenido": content,
                 "tokens": tokens_used,
+                # default=str: la salida de una herramienta puede traer Decimal o datetime de la BD.
+                "razonamiento": json.dumps(reasoning, default=str) if reasoning else None,
             })
 
             update_conv = text("""

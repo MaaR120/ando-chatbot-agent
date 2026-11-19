@@ -19,6 +19,15 @@ class TestLlmFactory(unittest.TestCase):
         self.assertIsInstance(llm, ChatAnthropic)
         self.assertEqual(llm.model, "claude-haiku-5-5")
         self.assertIsNone(llm.temperature)
+        # Con 1024 el thinking agotaba el presupuesto y la respuesta final salía vacía.
+        self.assertGreater(llm.max_tokens, 1024)
+
+    @patch.multiple(settings, llm_provider="anthropic", llm_model="claude-haiku-5-5", anthropic_api_key="test-key")
+    def test_anthropic_requests_summarized_thinking(self):
+        # Claude 5.x usa display "omitted" por defecto: el thinking llega vacío y la UI no muestra razonamiento.
+        payload = get_chat_llm()._get_request_payload("hola")
+
+        self.assertEqual(payload["thinking"], {"type": "adaptive", "display": "summarized"})
 
     @patch.multiple(settings, llm_provider="groq", llm_model="llama-3.3-70b-versatile", groq_api_key="test-key")
     def test_provider_selects_groq_even_with_other_keys(self):

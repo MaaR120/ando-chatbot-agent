@@ -42,3 +42,5 @@ class ConversationMessageItem(BaseModel):
     rol: str
     contenido: str
     fecha_creacion: str
+    thought: Optional[str] = None
+    steps: List[ToolCallStep] = Field(default_factory=list)
