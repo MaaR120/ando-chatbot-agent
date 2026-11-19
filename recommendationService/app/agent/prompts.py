@@ -7,9 +7,25 @@ from typing import Optional
 from app.agent.skills import SKILLS, skills_catalog
 
 
+LOGGED_IN = (
+    "El usuario inició sesión. Tienes disponibles get_personalized_recommendations_tool, "
+    "get_similar_users_recommendations_tool y get_user_itinerary_tool: úsalas cuando pida "
+    "recomendaciones para él o sus itinerarios, y presenta lo que devuelvan."
+)
+ANONYMOUS = (
+    "El usuario no inició sesión. No tienes las tools de recomendaciones personalizadas ni de "
+    "itinerarios guardados. Si pide sus itinerarios o recomendaciones para él, dile que inicie "
+    "sesión en Ando para verlos, y ofrécele una búsqueda general de lugares."
+)
+
+
 def session_context(user_id: Optional[str]) -> str:
-    """Valor de {sesion}: el LLM solo sabe si hay sesión; el user_id nunca entra al prompt."""
-    return "El usuario inició sesión." if user_id else "El usuario no inició sesión."
+    """
+    Valor de {sesion}. Sólo entra la regla que aplica a esta sesión: con las dos en el prompt
+    ("si inició sesión… / si no…") el modelo a veces aplicaba la equivocada y descartaba las
+    recomendaciones que ya había obtenido. El user_id nunca entra al prompt.
+    """
+    return LOGGED_IN if user_id else ANONYMOUS
 
 
 ANDO_AGENT_SYSTEM_PROMPT = """<contexto_de_sesion>
@@ -53,7 +69,7 @@ generar_pdf: úsala cuando el usuario pide un PDF de un itinerario o de un plan 
 
 load_skill_tool: carga las instrucciones completas de una skill del catálogo de <skills>.
 
-Si el usuario no inició sesión, get_personalized_recommendations_tool, get_similar_users_recommendations_tool y get_user_itinerary_tool no están disponibles. Si pide sus itinerarios o recomendaciones para él, dile al usuario que inicie sesión en Ando para ver sus itinerarios y recomendaciones personalizadas, y ofrécele una búsqueda general de lugares.
+Las tools de recomendaciones personalizadas e itinerarios dependen de la sesión: sigue lo que dice <contexto_de_sesion>.
 </tools>
 
 <skills>
@@ -117,3 +133,8 @@ Asistente: ¿En qué departamento o zona de Mendoza estás? Por ejemplo: Ciudad,
 ANDO_AGENT_SYSTEM_PROMPT = ANDO_AGENT_SYSTEM_PROMPT.replace(
     "__CATALOGO_DE_SKILLS__", skills_catalog(SKILLS)
 )
+
+
+def build_system_prompt(user_id: Optional[str]) -> str:
+    """System prompt final para create_agent, con el contexto de sesión ya completado."""
+    return ANDO_AGENT_SYSTEM_PROMPT.replace("{sesion}", session_context(user_id))

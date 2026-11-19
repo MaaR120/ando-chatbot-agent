@@ -29,6 +29,12 @@ class TestAgentPrompt(unittest.TestCase):
     def test_anonymous_session(self):
         self.assertIn("El usuario no inició sesión.", self.render(None))
 
+    def test_only_the_rule_of_the_current_session_is_in_the_prompt(self):
+        logged_in = self.render("8addc001-3489-4811-b84f-4c7be7bfce02")
+        anonymous = self.render(None)
+        self.assertNotIn("no inició sesión", logged_in)
+        self.assertNotIn("Tienes disponibles get_personalized_recommendations_tool", anonymous)
+
 
 if __name__ == "__main__":
     unittest.main()
