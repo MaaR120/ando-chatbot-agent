@@ -41,7 +41,7 @@ class Dia(BaseModel):
 
 
 class PdfInput(BaseModel):
-    name: str = Field(description="Nombre del archivo de salida, con extensión .pdf")
+    name: str = Field(description="Nombre de archivo corto, sin espacios y con extensión .pdf, por ejemplo 'itinerario_maipu.pdf'")
     title: str = Field(description="Título del documento")
     subtitle: str | None = Field(default=None, description="Subtítulo breve, por ejemplo '5 días en Mendoza'")
     dias: list[Dia] = Field(description="Días del plan, en orden")
@@ -144,7 +144,7 @@ def render_itinerario(data: PdfInput) -> FPDF:
 
 @tool(args_schema=PdfInput)
 def generar_pdf(name: str, title: str, dias: list[Dia], subtitle: str | None = None) -> dict:
-    """Crea un PDF con el plan de viaje: título, subtítulo y los lugares de cada día"""
+    """Crea un PDF con el plan de viaje: título, subtítulo y los lugares de cada día. Los textos van en español con tildes y ñ, sin Markdown, enlaces ni emojis."""
     PDF_DIR.mkdir(exist_ok=True)
     file_id = str(uuid.uuid4())
     data = PdfInput(name=name, title=title, subtitle=subtitle, dias=dias)

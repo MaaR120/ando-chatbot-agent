@@ -17,10 +17,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes_recommendations import router as recommendations_router
 from app.api.routes_optimization import router as optimization_router
-from app.api.routes_moderation import router as moderation_router
-from app.api.routes_assistant import router as assistant_router
-from app.api.routes_reviews import router as reviews_router
-from app.api.routes_itinerary import router as itinerary_router
 from app.api.routes_agent import router as agent_router
 from app.core.config import settings
 
@@ -45,10 +41,6 @@ app.add_middleware(
 app.include_router(agent_router)
 app.include_router(recommendations_router)
 app.include_router(optimization_router)
-app.include_router(moderation_router)
-app.include_router(assistant_router)
-app.include_router(reviews_router)
-app.include_router(itinerary_router)
 
 
 

@@ -86,21 +86,23 @@ class Settings(BaseModel):
         "groq" if os.getenv("GROQ_API_KEY") or os.getenv("GROQ-API-KEY") else "gemini",
     )
     llm_model: str = os.getenv("LLM_MODEL", "openai/gpt-oss-120b")
-    # Base de la API compatible con OpenAI de Groq (configurable para pruebas o proxies)
-    groq_api_base: str = os.getenv(
-        "GROQ_API_BASE", "https://api.groq.com/openai/v1"
-    ).rstrip("/")
-    groq_chat_model: str = os.getenv("GROQ_CHAT_MODEL", "openai/gpt-oss-120b")
-    groq_extract_model: str = os.getenv("GROQ_EXTRACT_MODEL", "openai/gpt-oss-20b")
-    gemini_api_key: Optional[str] = os.getenv("GEMINI_API_KEY", None)
     openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY", None)
     groq_api_key: Optional[str] = os.getenv(
         "GROQ_API_KEY", os.getenv("GROQ-API-KEY", None)
     )
     anthropic_api_key: Optional[str] = os.getenv("ANTHROPIC_API_KEY", None)
-    moderation_confidence_threshold: float = float(
-        os.getenv("MODERATION_CONFIDENCE_THRESHOLD", "0.70")
-    )
+
+    # Límites del agente. Cada iteración reenvía el prompt, las tools y los resultados previos al LLM,
+    # así que con planes de pocos tokens por minuto (p. ej. Groq on_demand: 8000 TPM) conviene
+    # mantenerlos bajos; con planes más amplios se pueden subir por variable de entorno.
+    agent_default_limit: int = int(os.getenv("AGENT_DEFAULT_LIMIT", "8"))
+    agent_max_limit: int = int(os.getenv("AGENT_MAX_LIMIT", "12"))
+    # 0 = descripción completa
+    agent_description_max_chars: int = int(os.getenv("AGENT_DESCRIPTION_MAX_CHARS", "200"))
+    agent_max_iterations: int = int(os.getenv("AGENT_MAX_ITERATIONS", "10"))
+
+    # Reintentos del cliente del proveedor ante 429/5xx (esperan lo que indica el proveedor).
+    llm_max_retries: int = int(os.getenv("LLM_MAX_RETRIES", "6"))
 
     def get_sqlalchemy_database_url(self) -> str:
         url = self.database_url

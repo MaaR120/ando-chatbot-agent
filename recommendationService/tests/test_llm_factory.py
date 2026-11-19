@@ -36,6 +36,14 @@ class TestLlmFactory(unittest.TestCase):
         self.assertIsInstance(llm, ChatGroq)
         self.assertEqual(llm.model_name, "openai/gpt-oss-120b")
 
+    @patch.multiple(settings, llm_provider="groq", groq_api_key="test-key", llm_max_retries=6)
+    def test_retries_come_from_settings(self):
+        self.assertEqual(get_chat_llm().max_retries, 6)
+
+    @patch.multiple(settings, llm_provider="anthropic", anthropic_api_key="test-key", llm_max_retries=6)
+    def test_retries_apply_to_every_provider(self):
+        self.assertEqual(get_chat_llm().max_retries, 6)
+
     @patch.multiple(settings, llm_provider="gemini")
     def test_unknown_provider_raises(self):
         with self.assertRaisesRegex(ValueError, "gemini"):

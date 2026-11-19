@@ -2,9 +2,23 @@
 Tests for the POI search tool: keyword filter (unit) and search (integration).
 """
 import unittest
+from unittest.mock import patch
 
-from app.agent.tools.poi_search_tool import MAX_LIMIT, keyword_filter, search_pois_tool
+from app.agent.tools.poi_search_tool import MAX_LIMIT, keyword_filter, search_pois_tool, truncate
 from tests.live_db import requires_db
+
+
+class TestTruncate(unittest.TestCase):
+    def test_cuts_long_descriptions(self):
+        with patch("app.agent.tools.poi_search_tool.settings.agent_description_max_chars", 10):
+            self.assertEqual(truncate("a" * 50), "a" * 10 + "...")
+
+    def test_zero_means_full_description(self):
+        with patch("app.agent.tools.poi_search_tool.settings.agent_description_max_chars", 0):
+            self.assertEqual(truncate("a" * 500), "a" * 500)
+
+    def test_none_passes_through(self):
+        self.assertIsNone(truncate(None))
 
 
 class TestKeywordFilter(unittest.TestCase):

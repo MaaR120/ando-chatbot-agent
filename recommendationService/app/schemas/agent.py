@@ -3,7 +3,11 @@ Pydantic Schemas for the LangChain Agent.
 """
 from typing import Any, List, Optional
 from pydantic import BaseModel, Field
-from app.schemas.assistant import ChatMessageItem
+
+
+class ChatMessageItem(BaseModel):
+    rol: str = Field(..., description="Rol del emisor: 'usuario', 'asistente' o 'sistema'")
+    contenido: str = Field(..., description="Texto del mensaje")
 
 
 class ToolCallStep(BaseModel):

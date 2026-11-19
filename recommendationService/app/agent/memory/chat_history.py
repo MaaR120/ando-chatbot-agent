@@ -3,7 +3,7 @@ Chat History and Memory helpers for LangChain Agent.
 """
 from typing import List, Union
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
-from app.schemas.assistant import ChatMessageItem
+from app.schemas.agent import ChatMessageItem
 
 
 def convert_chat_history_to_messages(

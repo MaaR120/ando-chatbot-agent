@@ -11,6 +11,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from app.agent.memory import convert_chat_history_to_messages
 from app.agent.prompts import ANDO_AGENT_SYSTEM_PROMPT, session_context
 from app.agent.tools import build_agent_tools
+from app.core.config import settings
 from app.core.llm_factory import get_chat_llm
 
 
@@ -79,7 +80,7 @@ class AndoTouristAgent:
             tools=self.tools,
             verbose=True,
             handle_parsing_errors=True,
-            max_iterations=5,
+            max_iterations=settings.agent_max_iterations,
             return_intermediate_steps=True,
         )
 

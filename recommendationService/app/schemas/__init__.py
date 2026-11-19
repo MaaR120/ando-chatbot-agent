@@ -14,12 +14,6 @@ from app.schemas.route_optimization import (
     OptimizationConflictItem,
 )
 
-from app.schemas.reviews_summary import (
-    ReviewItemPayload,
-    ReviewSummaryRequest,
-    ReviewSummaryResponse,
-)
-
 __all__ = [
     "HistoryRecommendationRequest",
     "HistoryRecommendationResponse",
@@ -32,8 +26,5 @@ __all__ = [
     "RouteOptimizationResponse",
     "StopOptimizationItem",
     "OptimizationConflictItem",
-    "ReviewItemPayload",
-    "ReviewSummaryRequest",
-    "ReviewSummaryResponse",
 ]
 

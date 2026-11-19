@@ -14,16 +14,19 @@ from app.agent.tools.pdf import PDF_DIR
 from app.schemas.agent import (
     AgentChatRequest,
     AgentChatResponse,
+    ChatMessageItem,
     ConversationItem,
     ConversationMessageItem,
 )
-from app.schemas.assistant import ChatMessageItem
 from app.services.chat_history_service import (
     DEFAULT_DEMO_USER_ID,
     ChatHistoryService,
 )
 
 logger = logging.getLogger(__name__)
+
+# 413 (petición demasiado grande para los tokens por minuto) y 429 del proveedor LLM.
+LLM_LIMIT_STATUS_CODES = (413, 429)
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 
@@ -182,9 +185,14 @@ def agent_chat_endpoint(payload: AgentChatRequest) -> AgentChatResponse:
             thought=result.get("thought"),
             steps=result.get("steps", []),
         )
-    except Exception:
+    except Exception as exc:
         # El detalle (SQL, trazas del proveedor LLM) va al log, nunca al cliente.
         logger.exception("Error al procesar mensaje con el agente")
+        if getattr(exc, "status_code", None) in LLM_LIMIT_STATUS_CODES:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="El proveedor de IA alcanzó su límite de uso. Esperá un minuto e intentá de nuevo.",
+            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error al procesar el mensaje. Intentá de nuevo más tarde.",

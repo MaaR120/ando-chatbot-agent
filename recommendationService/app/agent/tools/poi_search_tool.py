@@ -8,9 +8,37 @@ from typing import Any, Dict, List, Optional, Tuple
 from langchain_core.tools import tool
 from sqlalchemy import text
 
+from app.core.config import settings
 from app.core.database import get_engine
 
-MAX_LIMIT = 20
+MAX_LIMIT = settings.agent_max_limit
+
+DIAS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"]
+
+HORARIOS_SQL = """
+    SELECT "poiId", "diaSemanaDesde", "diaSemanaHasta", "horaDesde", "horaHasta"
+    FROM public.horarios
+    WHERE "poiId" = ANY(CAST(:ids AS uuid[]))
+    ORDER BY "diaSemanaDesde", "horaDesde"
+"""
+
+
+def truncate(text_: Optional[str]) -> Optional[str]:
+    """Recorta la descripción a AGENT_DESCRIPTION_MAX_CHARS (0 = completa)."""
+    max_chars = settings.agent_description_max_chars
+    if text_ and max_chars and len(text_) > max_chars:
+        return text_[:max_chars].rstrip() + "..."
+    return text_
+
+
+def format_horarios(rows) -> List[str]:
+    """Una franja por elemento, por ejemplo 'Lun-Vie 09:00-18:00' (0 = domingo)."""
+    out = []
+    for r in rows:
+        desde, hasta = DIAS[r["diaSemanaDesde"] % 7], DIAS[r["diaSemanaHasta"] % 7]
+        dias = desde if desde == hasta else f"{desde}-{hasta}"
+        out.append(f"{dias} {str(r['horaDesde'])[:5]}-{str(r['horaHasta'])[:5]}")
+    return out
 
 
 # Genera una condición ILIKE por palabra, con parámetros q0, q1, ..y escapa %,
@@ -31,7 +59,7 @@ def search_pois_tool(
     category: Optional[str] = None,
     department: Optional[str] = None,
     max_price: Optional[float] = None,
-    limit: int = 5,
+    limit: int = settings.agent_default_limit,
 ) -> List[Dict[str, Any]]:
     """
     Busca atractivos, bodegas, restaurantes, actividades y puntos de interés (POIs) reales en Mendoza.
@@ -40,7 +68,7 @@ def search_pois_tool(
     - category: Nombre de la categoría (ej. Aventura, Bodega, Gastronomía, Historia, Infantil, Montañismo, Museo, Parques y Plazas, Relax y Vida Nocturna).
     - department: Nombre del departamento de Mendoza (ej. 'Luján de Cuyo', 'Maipú', 'Godoy Cruz').
     - max_price: Presupuesto máximo estimado en pesos argentinos (ARS).
-    - limit: Cantidad máxima de resultados a retornar (por defecto 5, máximo 20).
+    - limit: Cantidad máxima de resultados a retornar. Usa valores chicos (entre 5 y 10): cada resultado ocupa contexto. Si no lo pasas se usa el valor por defecto del servidor; si pasas más que el máximo del servidor, se recorta.
     """
     engine = get_engine()
     sql = """
@@ -52,7 +80,7 @@ def search_pois_tool(
             p."precioMax",
             p."puntuacionPromedio",
             p."cantidadReviews",
-            p.direccion,
+            p."duracionEstimada",
             d.nombre AS departamento,
             z.nombre AS zona,
             COALESCE(string_agg(DISTINCT c.nombre, ', '), '') AS categorias
@@ -85,7 +113,7 @@ def search_pois_tool(
         params["max_price"] = max_price
 
     sql += """
-        GROUP BY p.id, p.nombre, p.descripcion, p."precioMin", p."precioMax", p."puntuacionPromedio", p."cantidadReviews", p.direccion, d.nombre, z.nombre
+        GROUP BY p.id, p.nombre, p.descripcion, p."precioMin", p."precioMax", p."puntuacionPromedio", p."cantidadReviews", p."duracionEstimada", d.nombre, z.nombre
         ORDER BY p."puntuacionPromedio" DESC NULLS LAST, p."cantidadReviews" DESC NULLS LAST
         LIMIT :limit
     """
@@ -93,21 +121,25 @@ def search_pois_tool(
     results = []
     with engine.connect() as conn:
         rows = conn.execute(text(sql), params).fetchall()
+        horarios: Dict[str, List[Any]] = {}
+        if rows:
+            ids = [str(r.id) for r in rows]
+            for h in conn.execute(text(HORARIOS_SQL), {"ids": ids}).mappings():
+                horarios.setdefault(str(h["poiId"]), []).append(h)
         for row in rows:
             results.append(
                 {
                     "id": str(row.id),
                     "nombre": row.nombre,
-                    "descripcion": (row.descripcion[:200] + "...")
-                    if row.descripcion and len(row.descripcion) > 200
-                    else row.descripcion,
+                    "descripcion": truncate(row.descripcion),
                     "departamento": row.departamento,
                     "zona": row.zona or "General",
-                    "direccion": row.direccion,
                     "categorias": row.categorias,
                     "puntuacion": row.puntuacionPromedio,
                     "precio_min": row.precioMin,
                     "precio_max": row.precioMax,
+                    "duracion_estimada_min": row.duracionEstimada,
+                    "horarios": format_horarios(horarios.get(str(row.id), [])),
                 }
             )
 

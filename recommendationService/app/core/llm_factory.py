@@ -18,6 +18,7 @@ def _groq(model: str, temperature: float, streaming: bool) -> BaseChatModel:
         groq_api_key=settings.groq_api_key,
         temperature=temperature,
         streaming=streaming,
+        max_retries=settings.llm_max_retries,
     )
 
 
@@ -29,6 +30,7 @@ def _openai(model: str, temperature: float, streaming: bool) -> BaseChatModel:
         openai_api_key=settings.openai_api_key,
         temperature=temperature,
         streaming=streaming,
+        max_retries=settings.llm_max_retries,
     )
 
 
@@ -39,6 +41,7 @@ def _anthropic(model: str, temperature: float, streaming: bool) -> BaseChatModel
         model=model,
         api_key=settings.anthropic_api_key,
         streaming=streaming,
+        max_retries=settings.llm_max_retries,
         max_tokens=128000,
         thinking={"type": "adaptive", "display": "summarized"},
     )
