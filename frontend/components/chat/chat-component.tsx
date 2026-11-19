@@ -44,6 +44,7 @@ import {
 } from "@/components/ui/message-scroller";
 
 export type ToolCallStep = {
+  id?: string;
   tool: string;
   input: unknown;
   thought?: string | null;
@@ -56,7 +57,31 @@ type ChatMessage = {
   text: string;
   thought?: string | null;
   steps?: ToolCallStep[];
+  // true mientras el agente sigue trabajando en este mensaje (streaming)
+  live?: boolean;
 };
+
+// Eventos que emite POST /agent/chat/stream (Server-Sent Events).
+type AgentEvent =
+  | { type: "start"; conversation_id: string }
+  | { type: "reasoning"; delta: string }
+  | { type: "token"; delta: string }
+  | {
+      type: "tool_call";
+      id: string;
+      tool: string;
+      input: unknown;
+      thought: string | null;
+    }
+  | { type: "tool_result"; id: string; tool: string; output: unknown }
+  | {
+      type: "done";
+      output: string;
+      thought: string | null;
+      steps: ToolCallStep[];
+      conversation_id: string;
+    }
+  | { type: "error"; detail: string };
 
 type Conversation = {
   id: string;
@@ -68,11 +93,29 @@ type Conversation = {
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const DEMO_USER_ID = "8addc001-3489-4811-b84f-4c7be7bfce02";
+// Cuenta inicial de la demo (no hay login real: se elige una cuenta en el pie de la barra lateral).
+const DEFAULT_USER_ID = "8addc001-3489-4811-b84f-4c7be7bfce02";
+const USER_STORAGE_KEY = "ando-chat-user";
+const ANONYMOUS = "anonimo";
 
-async function fetchConversations(): Promise<Conversation[]> {
+type DemoUser = {
+  id: string;
+  nombre: string;
+  apellido: string;
+  ciudad_origen: string | null;
+  valoraciones: number;
+  itinerarios: number;
+};
+
+async function fetchUsers(): Promise<DemoUser[]> {
+  const res = await fetch(`${API_BASE_URL}/agent/users`, { cache: "no-store" });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+async function fetchConversations(userId: string): Promise<Conversation[]> {
   const res = await fetch(
-    `${API_BASE_URL}/agent/conversations?user_id=${DEMO_USER_ID}`,
+    `${API_BASE_URL}/agent/conversations?user_id=${userId}`,
     {
       cache: "no-store",
     },
@@ -83,9 +126,10 @@ async function fetchConversations(): Promise<Conversation[]> {
 
 async function fetchConversationMessages(
   conversationId: string,
+  userId: string,
 ): Promise<ChatMessage[]> {
   const res = await fetch(
-    `${API_BASE_URL}/agent/conversations/${conversationId}/messages?user_id=${DEMO_USER_ID}`,
+    `${API_BASE_URL}/agent/conversations/${conversationId}/messages?user_id=${userId}`,
     { cache: "no-store" },
   );
   if (!res.ok) return [];
@@ -105,64 +149,130 @@ async function fetchConversationMessages(
   }));
 }
 
-async function removeConversation(conversationId: string): Promise<boolean> {
+async function removeConversation(
+  conversationId: string,
+  userId: string,
+): Promise<boolean> {
   const res = await fetch(
-    `${API_BASE_URL}/agent/conversations/${conversationId}?user_id=${DEMO_USER_ID}`,
+    `${API_BASE_URL}/agent/conversations/${conversationId}?user_id=${userId}`,
     { method: "DELETE" },
   );
   return res.ok;
 }
 
-async function replyToAgent(
+/**
+ * Envía el mensaje y llama a `onEvent` con cada evento a medida que el agente trabaja.
+ * El backend responde text/event-stream: bloques "data: <json>" separados por una línea en blanco.
+ */
+async function streamAgentReply(
   text: string,
   history: ChatMessage[],
   conversationId: string | null,
-): Promise<{
-  answer: string;
-  newConversationId?: string;
-  thought?: string | null;
-  steps?: ToolCallStep[];
-}> {
+  userId: string | null,
+  onEvent: (event: AgentEvent) => void,
+): Promise<void> {
   const formattedHistory = history.map((m) => ({
     rol: m.role === "user" ? "usuario" : "asistente",
     contenido: m.text,
   }));
 
-  const res = await fetch(`${API_BASE_URL}/agent/chat`, {
+  const res = await fetch(`${API_BASE_URL}/agent/chat/stream`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       message: text,
-      user_id: DEMO_USER_ID,
+      // null = sin sesión: el agente no tiene las tools personales y la conversación no se guarda.
+      user_id: userId,
       conversation_id: conversationId,
       history: formattedHistory,
     }),
   });
 
-  if (!res.ok) {
+  if (!res.ok || !res.body) {
     const errorData = await res.json().catch(() => ({}));
     throw new Error(errorData.detail || `Error en el servidor (${res.status})`);
   }
 
-  const data = await res.json();
-  return {
-    answer: data.response,
-    newConversationId: data.conversation_id,
-    thought: data.thought,
-    steps: data.steps,
-  };
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // Un evento puede llegar partido en varios fragmentos: se procesan sólo los completos.
+    const blocks = buffer.split("\n\n");
+    buffer = blocks.pop() ?? "";
+    for (const block of blocks) {
+      const data = block
+        .split("\n")
+        .filter((line) => line.startsWith("data: "))
+        .map((line) => line.slice(6))
+        .join("\n");
+      if (data) onEvent(JSON.parse(data) as AgentEvent);
+    }
+  }
+}
+
+/** Aplica un evento del stream al mensaje del asistente que se está construyendo. */
+function applyAgentEvent(message: ChatMessage, event: AgentEvent): ChatMessage {
+  switch (event.type) {
+    case "reasoning":
+      return { ...message, thought: (message.thought ?? "") + event.delta };
+    case "token":
+      return { ...message, text: message.text + event.delta };
+    case "tool_call":
+      // El texto previo a la tool call ya viaja en `thought` del paso: se limpia la respuesta.
+      return {
+        ...message,
+        text: "",
+        steps: [
+          ...(message.steps ?? []),
+          {
+            id: event.id,
+            tool: event.tool,
+            input: event.input,
+            thought: event.thought,
+          },
+        ],
+      };
+    case "tool_result":
+      return {
+        ...message,
+        steps: (message.steps ?? []).map((s) =>
+          s.id === event.id ? { ...s, output: event.output } : s,
+        ),
+      };
+    case "done":
+      return {
+        ...message,
+        text: event.output,
+        thought: event.thought,
+        steps: event.steps,
+        live: false,
+      };
+    case "error":
+      return { ...message, text: `⚠️ ${event.detail}`, live: false };
+    default:
+      return message;
+  }
 }
 
 function formatPayload(value: unknown, indent?: number): string {
   return typeof value === "string" ? value : JSON.stringify(value, null, indent);
 }
 
-function ToolStepCard({ step }: { step: ToolCallStep }) {
+function ToolStepCard({ step, live }: { step: ToolCallStep; live?: boolean }) {
   return (
     <div className="rounded-lg border border-zinc-800/60 bg-zinc-900/50 p-2.5 space-y-1.5">
-      <span className="font-bold text-emerald-300">🔧 {step.tool}</span>
+      <div className="flex items-center gap-2">
+        <span className="font-bold text-emerald-300">🔧 {step.tool}</span>
+        {live && step.output == null && (
+          <span className="animate-pulse text-[10px] text-zinc-500">
+            ejecutando…
+          </span>
+        )}
+      </div>
 
       {step.thought && (
         <div className="text-[10px] text-zinc-400">
@@ -194,11 +304,12 @@ function ToolStepCard({ step }: { step: ToolCallStep }) {
   );
 }
 
-function ToolSteps({ steps }: { steps: ToolCallStep[] }) {
+function ToolSteps({ steps, live }: { steps: ToolCallStep[]; live?: boolean }) {
   const label = `${steps.length} ${steps.length === 1 ? "herramienta invocada" : "herramientas invocadas"}`;
 
   return (
-    <details className="group border-t border-zinc-800/60">
+    // Abierto mientras el agente trabaja, para ver cada tool apenas se invoca.
+    <details className="group border-t border-zinc-800/60" open={live || undefined}>
       <summary className="flex cursor-pointer select-none items-center gap-1.5 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-emerald-400 hover:bg-zinc-900/60">
         <HugeiconsIcon icon={Wrench01Icon} size={12} />
         <span>{label}</span>
@@ -208,7 +319,7 @@ function ToolSteps({ steps }: { steps: ToolCallStep[] }) {
       </summary>
       <div className="space-y-2 p-3 pt-0">
         {steps.map((s, idx) => (
-          <ToolStepCard key={idx} step={s} />
+          <ToolStepCard key={s.id ?? idx} step={s} live={live} />
         ))}
       </div>
     </details>
@@ -218,9 +329,11 @@ function ToolSteps({ steps }: { steps: ToolCallStep[] }) {
 function ToolCallsDisclosure({
   thought,
   steps: rawSteps,
+  live,
 }: {
   thought?: string | null;
   steps?: ToolCallStep[] | null;
+  live?: boolean;
 }) {
   const steps = rawSteps ?? [];
   if (!thought && steps.length === 0) return null;
@@ -228,10 +341,10 @@ function ToolCallsDisclosure({
   return (
     <div className="mb-2 w-full max-w-2xl overflow-hidden rounded-xl border border-zinc-800/80 bg-zinc-950/70 font-mono text-[11px] shadow-sm backdrop-blur">
       {thought && (
-        <details className="group">
+        <details className="group" open={live || undefined}>
           <summary className="flex cursor-pointer select-none items-center gap-1.5 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-amber-400 hover:bg-zinc-900/60">
             <HugeiconsIcon icon={AiSparklesIcon} size={12} />
-            <span>Pensamiento de la IA</span>
+            <span>{live ? "Pensando…" : "Pensamiento de la IA"}</span>
             <span className="ml-auto font-sans font-normal normal-case text-zinc-500 group-open:rotate-180">
               ▼
             </span>
@@ -241,7 +354,7 @@ function ToolCallsDisclosure({
           </div>
         </details>
       )}
-      {steps.length > 0 && <ToolSteps steps={steps} />}
+      {steps.length > 0 && <ToolSteps steps={steps} live={live} />}
     </div>
   );
 }
@@ -251,7 +364,8 @@ type PdfOutput = { file_id: string; filename: string };
 function PdfDownloads({ steps }: { steps?: ToolCallStep[] | null }) {
   const pdfs = (steps ?? [])
     .filter((s) => s.tool === "generar_pdf")
-    .map((s) => s.output as PdfOutput);
+    .map((s) => s.output as PdfOutput | null)
+    .filter((p): p is PdfOutput => !!p?.file_id);
   return pdfs.map((p) => (
     <a
       key={p.file_id}
@@ -261,6 +375,15 @@ function PdfDownloads({ steps }: { steps?: ToolCallStep[] | null }) {
       Descargar {p.filename}
     </a>
   ));
+}
+
+function ThinkingIndicator() {
+  return (
+    <div className="flex w-fit items-center gap-2.5 rounded-xl border border-zinc-800/80 bg-zinc-900/40 px-3.5 py-2 font-mono text-[11px] text-zinc-400 backdrop-blur animate-pulse">
+      <span className="flex h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
+      <span>Pensando y consultando herramientas de Mendoza...</span>
+    </div>
+  );
 }
 
 function CopyAction({ text }: { text: string }) {
@@ -306,25 +429,53 @@ export function ChatComponent() {
   const [draft, setDraft] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
+  // Cuenta con la que se conversa; null = sin sesión.
+  const [userId, setUserId] = React.useState<string | null>(DEFAULT_USER_ID);
+  const [users, setUsers] = React.useState<DemoUser[]>([]);
 
   const formRef = React.useRef<HTMLFormElement>(null);
   const nextId = React.useRef(0);
   const newId = () => String(nextId.current++);
 
+  const currentUser = users.find((u) => u.id === userId) ?? null;
+
   const refreshConversations = async () => {
+    if (!userId) return;
     try {
-      const list = await fetchConversations();
+      const list = await fetchConversations(userId);
       setConversations(list);
     } catch {
       // Ignorar si la API no está disponible
     }
   };
 
+  // Cuentas disponibles y, si sigue existiendo, la última elegida en este navegador.
+  React.useEffect(() => {
+    fetchUsers()
+      .then((list) => {
+        setUsers(list);
+        let stored: string | null = null;
+        try {
+          stored = localStorage.getItem(USER_STORAGE_KEY);
+        } catch {
+          // Sin acceso a localStorage: se queda la cuenta por defecto.
+        }
+        if (stored === ANONYMOUS) setUserId(null);
+        else if (stored && list.some((u) => u.id === stored)) setUserId(stored);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Al cambiar de cuenta se cargan sus conversaciones (sin sesión no hay historial guardado).
   React.useEffect(() => {
     let ignore = false;
     async function load() {
+      if (!userId) {
+        setConversations([]);
+        return;
+      }
       try {
-        const list = await fetchConversations();
+        const list = await fetchConversations(userId);
         if (!ignore) {
           setConversations(list);
         }
@@ -336,15 +487,15 @@ export function ChatComponent() {
     return () => {
       ignore = true;
     };
-  }, []);
+  }, [userId]);
 
   // Seleccionar conversación previa
   async function handleSelectConversation(id: string) {
-    if (id === currentConversationId || busy) return;
+    if (id === currentConversationId || busy || !userId) return;
     setBusy(true);
     setCurrentConversationId(id);
     try {
-      const historyMsgs = await fetchConversationMessages(id);
+      const historyMsgs = await fetchConversationMessages(id, userId);
       setMessages(historyMsgs);
     } catch {
       setMessages([]);
@@ -361,11 +512,25 @@ export function ChatComponent() {
     setDraft("");
   }
 
+  // Cambiar de cuenta: cada cuenta tiene sus conversaciones, así que se empieza un chat nuevo.
+  function handleChangeUser(value: string) {
+    if (busy) return;
+    const next = value === ANONYMOUS ? null : value;
+    setUserId(next);
+    try {
+      localStorage.setItem(USER_STORAGE_KEY, value);
+    } catch {
+      // Sin acceso a localStorage: el cambio dura hasta recargar.
+    }
+    handleNewChat();
+  }
+
   // Eliminar conversación
   async function handleDeleteConversation(e: React.MouseEvent, id: string) {
     e.stopPropagation();
+    if (!userId) return;
     try {
-      await removeConversation(id);
+      await removeConversation(id, userId);
       setConversations((prev) => prev.filter((c) => c.id !== id));
       if (currentConversationId === id) {
         handleNewChat();
@@ -383,42 +548,38 @@ export function ChatComponent() {
     setDraft("");
     setBusy(true);
 
+    const history = messages;
     const userMsgId = newId();
-    setMessages((prev) => [...prev, { id: userMsgId, role: "user", text }]);
+    // Mensaje del asistente vacío que se va completando con los eventos del stream.
+    const assistantId = newId();
+    setMessages((prev) => [
+      ...prev,
+      { id: userMsgId, role: "user", text },
+      { id: assistantId, role: "assistant", text: "", steps: [], live: true },
+    ]);
+
+    const update = (fn: (m: ChatMessage) => ChatMessage) =>
+      setMessages((prev) => prev.map((m) => (m.id === assistantId ? fn(m) : m)));
 
     try {
-      const result = await replyToAgent(text, messages, currentConversationId);
-      if (
-        result.newConversationId &&
-        result.newConversationId !== currentConversationId
-      ) {
-        setCurrentConversationId(result.newConversationId);
-        refreshConversations();
-      }
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: newId(),
-          role: "assistant",
-          text: result.answer,
-          thought: result.thought,
-          steps: result.steps,
-        },
-      ]);
+      await streamAgentReply(text, history, currentConversationId, userId, (event) => {
+        if (
+          event.type === "start" &&
+          event.conversation_id !== currentConversationId
+        ) {
+          setCurrentConversationId(event.conversation_id);
+        }
+        if (event.type === "done") refreshConversations();
+        update((m) => applyAgentEvent(m, event));
+      });
+      // Si el stream se cortó sin "done" ni "error", el mensaje deja de estar en vivo igual.
+      update((m) => ({ ...m, live: false }));
     } catch (err: unknown) {
       const errorMessage =
         err instanceof Error
           ? err.message
           : "No pude responder. Probá de nuevo.";
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: newId(),
-          role: "assistant",
-          text: `⚠️ ${errorMessage}`,
-        },
-      ]);
+      update((m) => ({ ...m, text: `⚠️ ${errorMessage}`, live: false }));
     } finally {
       setBusy(false);
     }
@@ -460,7 +621,9 @@ export function ChatComponent() {
           </div>
           {conversations.length === 0 ? (
             <div className="px-3 py-6 text-center text-xs text-zinc-500">
-              No hay conversaciones guardadas.
+              {userId
+                ? "No hay conversaciones guardadas."
+                : "Sin sesión las conversaciones no se guardan. Elegí una cuenta abajo para guardarlas."}
             </div>
           ) : (
             conversations.map((c) => {
@@ -496,17 +659,36 @@ export function ChatComponent() {
           )}
         </div>
 
-        {/* Footer usuario demo */}
+        {/* Cuenta activa: la demo no tiene login real, se elige la cuenta acá */}
         <div className="border-t border-zinc-800/60 p-3 text-xs text-zinc-400">
           <div className="flex items-center gap-2">
-            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-800 text-[10px] font-bold text-zinc-300">
-              M
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[10px] font-bold text-zinc-300">
+              {currentUser ? currentUser.nombre[0].toUpperCase() : "?"}
             </div>
-            <div className="truncate">
-              <p className="text-[11px] font-medium text-zinc-200 leading-tight">
-                Martina Luconi
-              </p>
-              <p className="text-[10px] text-zinc-500">Mendoza, AR</p>
+            <div className="min-w-0 flex-1">
+              <label
+                htmlFor="account"
+                className="block text-[10px] text-zinc-500"
+              >
+                {userId ? "Sesión iniciada como" : "Sin sesión"}
+              </label>
+              <select
+                id="account"
+                value={userId ?? ANONYMOUS}
+                onChange={(e) => handleChangeUser(e.target.value)}
+                disabled={busy}
+                className="w-full cursor-pointer truncate rounded bg-transparent text-[11px] font-medium text-zinc-200 outline-none hover:text-white disabled:cursor-not-allowed [&>option]:bg-zinc-900"
+              >
+                <option value={ANONYMOUS}>Sin sesión (invitado)</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.nombre} {u.apellido} · {u.valoraciones} valoraciones
+                  </option>
+                ))}
+                {userId && !currentUser && (
+                  <option value={userId}>Cuenta actual</option>
+                )}
+              </select>
             </div>
           </div>
         </div>
@@ -551,7 +733,9 @@ export function ChatComponent() {
                       {messages.length === 0 && (
                         <div className="flex flex-col items-center justify-center py-20 text-center text-zinc-500">
                           <p className="text-sm font-medium text-zinc-300">
-                            ¡Hola, Martina!
+                            {currentUser
+                              ? `¡Hola, ${currentUser.nombre}!`
+                              : "¡Hola!"}
                           </p>
                           <p className="text-xs text-zinc-500 mt-1 max-w-sm">
                             ¿En qué puedo ayudarte hoy? Pregúntame sobre bodegas
@@ -583,31 +767,25 @@ export function ChatComponent() {
                                 <ToolCallsDisclosure
                                   thought={m.thought}
                                   steps={m.steps}
+                                  live={m.live}
                                 />
-                                <Markdown>{m.text}</Markdown>
-                                <PdfDownloads steps={m.steps} />
-                                <MessageFooter className="px-0">
-                                  <CopyAction text={m.text} />
-                                </MessageFooter>
+                                {m.live &&
+                                  !m.text &&
+                                  !m.thought &&
+                                  !m.steps?.length && <ThinkingIndicator />}
+                                {m.text && <Markdown>{m.text}</Markdown>}
+                                {!m.live && <PdfDownloads steps={m.steps} />}
+                                {!m.live && (
+                                  <MessageFooter className="px-0">
+                                    <CopyAction text={m.text} />
+                                  </MessageFooter>
+                                )}
                               </MessageContent>
                             </Message>
                           )}
                         </MessageScrollerItem>
                       ))}
 
-                      {busy && (
-                        <Message align="start">
-                          <MessageContent>
-                            <div className="flex items-center gap-2.5 rounded-xl border border-zinc-800/80 bg-zinc-900/40 px-3.5 py-2 text-xs text-zinc-400 backdrop-blur animate-pulse font-mono text-[11px]">
-                              <span className="flex h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
-                              <span>
-                                Pensando y consultando herramientas de
-                                Mendoza...
-                              </span>
-                            </div>
-                          </MessageContent>
-                        </Message>
-                      )}
                     </MessageScrollerContent>
                   </MessageScrollerViewport>
                   <MessageScrollerButton />

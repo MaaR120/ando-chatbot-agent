@@ -100,6 +100,9 @@ class Settings(BaseModel):
     # 0 = descripción completa
     agent_description_max_chars: int = int(os.getenv("AGENT_DESCRIPTION_MAX_CHARS", "200"))
     agent_max_iterations: int = int(os.getenv("AGENT_MAX_ITERATIONS", "10"))
+    # Turnos del usuario (con sus tool calls y respuestas) que se le reenvían al modelo. El
+    # checkpointer guarda la conversación completa; esto sólo recorta lo que viaja en cada llamada.
+    agent_history_turns: int = int(os.getenv("AGENT_HISTORY_TURNS", "5"))
 
     # Reintentos del cliente del proveedor ante 429/5xx (esperan lo que indica el proveedor).
     llm_max_retries: int = int(os.getenv("LLM_MAX_RETRIES", "6"))

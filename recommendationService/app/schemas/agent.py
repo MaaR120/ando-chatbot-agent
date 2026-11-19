@@ -19,7 +19,7 @@ class ToolCallStep(BaseModel):
 
 class AgentChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=1000, description="Mensaje o consulta del turista")
-    user_id: Optional[str] = Field(default=None, description="UUID del usuario autenticado si aplica")
+    user_id: Optional[str] = Field(default=None, description="UUID del usuario con sesión; sin él, el agente no tiene las tools personales y no se guarda la conversación")
     conversation_id: Optional[str] = Field(default=None, description="UUID de la conversación existente para continuar el hilo")
     history: List[ChatMessageItem] = Field(default_factory=list, description="Historial de mensajes previos")
 
@@ -48,3 +48,12 @@ class ConversationMessageItem(BaseModel):
     fecha_creacion: str
     thought: Optional[str] = None
     steps: List[ToolCallStep] = Field(default_factory=list)
+
+
+class DemoUserItem(BaseModel):
+    id: str
+    nombre: str
+    apellido: str
+    ciudad_origen: Optional[str] = None
+    valoraciones: int = 0
+    itinerarios: int = 0
