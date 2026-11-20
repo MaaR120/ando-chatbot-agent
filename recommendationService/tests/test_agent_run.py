@@ -216,3 +216,38 @@ class TestTrimHistory(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+from tests.live_db import requires_db
+
+
+@requires_db
+class TestPostgresCheckpointer(AgentTestCase):
+    def nueva_instancia(self):
+        from langgraph.checkpoint.postgres import PostgresSaver
+        from psycopg_pool import ConnectionPool
+
+        from app.core.config import settings
+
+        pool = ConnectionPool(settings.database_url, min_size=1, max_size=1, open=True, kwargs={"autocommit": True, "prepare_threshold": None})
+        self.addCleanup(pool.close)
+        saver = PostgresSaver(pool)
+        saver.setup()
+        return saver
+
+    def test_otro_proceso_recupera_las_tool_calls_del_turno_anterior(self):
+        import uuid
+
+        hilo = str(uuid.uuid4())
+        primera = self.make_agent(
+            [tool_call("buscar", {"query": "bodega"}), AIMessage(content="Encontré BODEGA.")],
+            checkpointer=self.nueva_instancia(),
+        )
+        primera.run("Buscá bodegas", thread_id=hilo)
+
+        segunda = self.make_agent([AIMessage(content="Te mostré BODEGA.")], checkpointer=self.nueva_instancia())
+        segunda.run("¿De dónde salió?", thread_id=hilo)
+
+        vistos = self.model.calls[0]
+        self.assertTrue(any(isinstance(m, ToolMessage) and "BODEGA" in str(m.content) for m in vistos))
+        self.assertTrue(any(isinstance(m, AIMessage) and m.tool_calls for m in vistos))
