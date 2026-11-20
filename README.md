@@ -100,14 +100,14 @@ contenedor de Postgres y se omiten si no está levantado.
   `load_skill_tool`, `get_poi_reviews_summary_tool`. Si hay sesión, además `get_user_itinerary_tool`,
   `get_personalized_recommendations_tool` y `get_similar_users_recommendations_tool`. El `user_id` lo
   fija el servidor y nunca el modelo.
-- **Memoria de corto plazo:** un checkpointer de LangGraph (`InMemorySaver`) guarda el estado
-  completo de cada conversación, con sus tool calls y resultados. El `thread_id` es el
-  `conversation_id`. Las conversaciones también se guardan en Postgres para listarlas en la UI. Si se
-  reabre una conversación que el checkpointer no tiene (por ejemplo, después de reiniciar el
-  servidor), se siembra con el texto guardado en la base.
+- **Memoria de corto plazo:** un checkpointer de LangGraph sobre Postgres (`PostgresSaver`, en la
+  misma base de `DATABASE_URL`; crea sus tablas al primer uso) guarda el estado completo de cada
+  conversación, con sus tool calls y resultados. El `thread_id` es el `conversation_id`. Como vive en
+  la base, la memoria sobrevive a reinicios y funciona aunque cada turno lo atienda otra instancia del
+  servidor. Las conversaciones también se guardan en Postgres para listarlas en la UI.
 - **Conocimiento propio (skills):** archivos `skills/<nombre>/SKILL.md`. El prompt solo lleva el
   catálogo (nombre y descripción) y el agente carga el cuerpo con `load_skill_tool` cuando lo
-  necesita. Por ejemplo, `pdf-itinerario` antes de generar un PDF.
+  necesita. Por ejemplo, `armar-itinerario`, que guía el plan completo: lugares, reseñas, ruta óptima y PDF.
 - **Middleware (propio, `middleware.py`):**
   - `tool_errors_as_messages` convierte la excepción de una tool en un mensaje de error que el
     modelo puede leer, en vez de cortar el turno.

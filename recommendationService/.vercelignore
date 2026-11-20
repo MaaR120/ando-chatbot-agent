@@ -1,0 +1,4 @@
+tests
+.env*
+generated_pdfs
+__pycache__

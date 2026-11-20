@@ -8,7 +8,8 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.postgres import PostgresSaver
+from psycopg_pool import ConnectionPool
 
 from app.agent.memory import convert_chat_history_to_messages
 from app.agent.middleware import tool_errors_as_messages, trim_history
@@ -17,9 +18,26 @@ from app.agent.tools import build_agent_tools
 from app.core.config import settings
 from app.core.llm_factory import get_chat_llm
 
-# Memoria de corto plazo: un único checkpointer para todo el proceso. Guarda el estado completo
-# de cada conversación (mensajes, tool calls y resultados) bajo su thread_id = conversation_id.
-CHECKPOINTER: BaseCheckpointSaver = InMemorySaver()
+# Memoria de corto plazo: un checkpointer sobre Postgres compartido por todas las instancias. Guarda
+# el estado completo de cada conversación (mensajes, tool calls y resultados) bajo su thread_id =
+# conversation_id, así un turno puede caer en otra instancia o después de un reinicio sin perderlo.
+_CHECKPOINTER: Optional[BaseCheckpointSaver] = None
+
+
+def default_checkpointer() -> BaseCheckpointSaver:
+    global _CHECKPOINTER
+    if _CHECKPOINTER is None:
+        pool = ConnectionPool(
+            settings.database_url,
+            min_size=1,
+            max_size=4,
+            open=True,
+            kwargs={"autocommit": True, "prepare_threshold": None},
+        )
+        saver = PostgresSaver(pool)
+        saver.setup()
+        _CHECKPOINTER = saver
+    return _CHECKPOINTER
 
 
 def _reasoning(message: BaseMessage) -> List[str]:
@@ -86,7 +104,7 @@ class AndoTouristAgent:
         # streaming=True: el modelo entrega el texto y el razonamiento por fragmentos, que stream()
         # reenvía a la UI. invoke() sigue funcionando igual (junta los fragmentos).
         self.llm = get_chat_llm(temperature=0.2, streaming=True)
-        self.checkpointer = checkpointer or CHECKPOINTER
+        self.checkpointer = checkpointer or default_checkpointer()
         # Las tools dependen de la sesión (las personales llevan el user_id del servidor), por eso
         # el grafo se arma por request; el checkpointer es el mismo para todos.
         self.graph = create_agent(

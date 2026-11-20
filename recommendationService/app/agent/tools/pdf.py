@@ -3,6 +3,7 @@ LangChain Tool for transforming User Itineraries and Travel Plans into PDFs
 files.
 """
 
+import os
 import uuid
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 FONTS_DIR = Path(__file__).parent / "fonts"
-PDF_DIR = Path(__file__).resolve().parents[3] / "generated_pdfs"
+PDF_DIR = Path(os.environ.get("PDF_DIR") or Path(__file__).resolve().parents[3] / "generated_pdfs")
 
 ACCENT = (122, 31, 52)
 ACCENT_SOFT = (240, 214, 220)
@@ -24,6 +25,8 @@ BAND_PAD = 14
 TITLE_LINE = 10
 PRICE_W = 38
 DAY_KEEP = 45  # alto mínimo para no dejar un encabezado de día solo al pie
+GUTTER = 26  # columna de la línea de tiempo: hora, duración y punto
+DOT_X = GUTTER - 5
 
 
 class Lugar(BaseModel):
@@ -33,6 +36,14 @@ class Lugar(BaseModel):
     precio_desde: int | None = Field(
         default=None, description="Precio mínimo en ARS. 0 si es gratis, null si no se conoce"
     )
+    llegada: str | None = Field(default=None, description="Hora de llegada HH:mm que devolvió optimize_route_tool")
+    duracion_min: int | None = Field(default=None, description="Duración de la visita en minutos, de optimize_route_tool")
+    traslado_siguiente_min: int | None = Field(
+        default=None, description="Minutos de traslado hasta el lugar siguiente, de optimize_route_tool"
+    )
+    puntuacion: float | None = Field(default=None, description="Puntuación promedio de get_poi_reviews_summary_tool")
+    cantidad_reviews: int | None = Field(default=None, description="Cantidad de opiniones de get_poi_reviews_summary_tool")
+    resena: str | None = Field(default=None, description="Una frase con lo que destacan las opiniones recientes")
 
 
 class Dia(BaseModel):
@@ -99,33 +110,105 @@ def _draw_encabezado_dia(pdf: FPDF, numero: int, titulo: str) -> None:
     pdf.ln(5)
 
 
-def _draw_lugar(pdf: FPDF, lugar: Lugar) -> None:
+def formatear_puntuacion(puntuacion: float | None, cantidad: int | None) -> str:
+    if puntuacion is None:
+        return ""
+    texto = f"★ {puntuacion:.1f}".replace(".", ",")
+    if cantidad:
+        texto += f" · {cantidad} {'opinión' if cantidad == 1 else 'opiniones'}"
+    return texto
+
+
+def formatear_duracion(minutos: int) -> str:
+    horas, resto = divmod(minutos, 60)
+    if not horas:
+        return f"{resto} min"
+    return f"{horas} h {resto:02d}" if resto else f"{horas} h"
+
+
+def _draw_hito(pdf: FPDF, lugar: Lugar, top: float, bottom: float, ultimo: bool) -> None:
+    x = pdf.l_margin
+    pdf.set_xy(x, top)
+    pdf.set_font("DejaVu", style="B", size=11)
+    pdf.set_text_color(*ACCENT)
+    pdf.cell(DOT_X - 3, 6, text=lugar.llegada or "", align="R")
+    if lugar.duracion_min:
+        pdf.set_xy(x, top + 6)
+        pdf.set_font("DejaVu", size=8)
+        pdf.set_text_color(*GREY)
+        pdf.cell(DOT_X - 3, 5, text=formatear_duracion(lugar.duracion_min), align="R")
+    pdf.set_draw_color(*ACCENT)
+    pdf.set_fill_color(*ACCENT)
+    pdf.circle(x + DOT_X, top + 3, 1.6, style="F")
+    if not ultimo:
+        pdf.set_line_width(0.4)
+        pdf.line(x + DOT_X, top + 5, x + DOT_X, bottom)
+        pdf.set_line_width(0.2)
+
+
+def _draw_traslado(pdf: FPDF, minutos: int) -> None:
+    y = pdf.get_y()
+    pdf.set_draw_color(*ACCENT)
+    pdf.set_line_width(0.4)
+    pdf.line(pdf.l_margin + DOT_X, y, pdf.l_margin + DOT_X, y + 7)
+    pdf.set_line_width(0.2)
+    pdf.set_xy(pdf.l_margin + GUTTER, y + 1)
+    pdf.set_font("DejaVu", size=8)
+    pdf.set_text_color(*GREY)
+    pdf.cell(0, 5, text=f"{formatear_duracion(minutos)} de traslado")
+    pdf.set_xy(pdf.l_margin, y + 7)
+
+
+def _draw_lugar(pdf: FPDF, lugar: Lugar, timeline: bool = False, ultimo: bool = True) -> None:
+    sangria = GUTTER if timeline else 0
+    ancho = pdf.epw - sangria
+    x = pdf.l_margin + sangria
     top = pdf.get_y()
+    pdf.set_x(x)
     pdf.set_font("DejaVu", style="B", size=11)
     pdf.set_text_color(*INK)
-    pdf.multi_cell(pdf.epw - PRICE_W, 6, text=lugar.nombre, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.multi_cell(ancho - PRICE_W, 6, text=lugar.nombre, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     bottom = pdf.get_y()
     pdf.set_xy(pdf.l_margin + pdf.epw - PRICE_W, top)
     pdf.set_font("DejaVu", style="B", size=10)
     pdf.set_text_color(*ACCENT)
     pdf.cell(PRICE_W, 6, text=formatear_precio(lugar.precio_desde), align="R")
-    pdf.set_xy(pdf.l_margin, bottom)
+    pdf.set_xy(x, bottom)
     pdf.set_font("DejaVu", size=9)
     pdf.set_text_color(*GREY)
-    pdf.multi_cell(0, 5, text=lugar.zona, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.multi_cell(ancho, 5, text=lugar.zona, new_x=XPos.LEFT, new_y=YPos.NEXT)
+    puntuacion = formatear_puntuacion(lugar.puntuacion, lugar.cantidad_reviews)
+    if puntuacion:
+        pdf.set_x(x)
+        pdf.set_font("DejaVu", style="B", size=9)
+        pdf.set_text_color(*ACCENT)
+        pdf.multi_cell(ancho, 5, text=puntuacion, new_x=XPos.LEFT, new_y=YPos.NEXT)
     pdf.ln(1)
+    pdf.set_x(x)
     pdf.set_font("DejaVu", size=10)
     pdf.set_text_color(*INK)
-    pdf.multi_cell(0, 5.5, text=lugar.descripcion, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.ln(5)
+    pdf.multi_cell(ancho, 5.5, text=lugar.descripcion, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    if lugar.resena:
+        pdf.set_x(x)
+        pdf.set_font("DejaVu", size=9)
+        pdf.set_text_color(*GREY)
+        pdf.multi_cell(ancho, 5, text=f"«{lugar.resena}»", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    if timeline:
+        fin = pdf.get_y() + (2 if lugar.traslado_siguiente_min and not ultimo else 5)
+        _draw_hito(pdf, lugar, top, fin, ultimo)
+        pdf.set_xy(pdf.l_margin, fin)
+        if lugar.traslado_siguiente_min and not ultimo:
+            _draw_traslado(pdf, lugar.traslado_siguiente_min)
+    else:
+        pdf.ln(5)
 
 
-def _draw_lugar_entero(pdf: FPDF, lugar: Lugar) -> None:
+def _draw_lugar_entero(pdf: FPDF, lugar: Lugar, timeline: bool = False, ultimo: bool = True) -> None:
     with pdf.offset_rendering() as prueba:
-        _draw_lugar(prueba, lugar)
+        _draw_lugar(prueba, lugar, timeline, ultimo)
     if prueba.page_break_triggered:
         pdf.add_page()
-    _draw_lugar(pdf, lugar)
+    _draw_lugar(pdf, lugar, timeline, ultimo)
 
 
 def render_itinerario(data: PdfInput) -> FPDF:
@@ -137,15 +220,16 @@ def render_itinerario(data: PdfInput) -> FPDF:
     _draw_portada(pdf, data.title, data.subtitle)
     for numero, dia in enumerate(data.dias, start=1):
         _draw_encabezado_dia(pdf, numero, dia.titulo)
-        for lugar in dia.lugares:
-            _draw_lugar_entero(pdf, lugar)
+        timeline = any(lugar.llegada for lugar in dia.lugares)
+        for i, lugar in enumerate(dia.lugares):
+            _draw_lugar_entero(pdf, lugar, timeline, ultimo=i == len(dia.lugares) - 1)
     return pdf
 
 
 @tool(args_schema=PdfInput)
 def generar_pdf(name: str, title: str, dias: list[Dia], subtitle: str | None = None) -> dict:
     """Crea un PDF con el plan de viaje: título, subtítulo y los lugares de cada día. Los textos van en español con tildes y ñ, sin Markdown, enlaces ni emojis."""
-    PDF_DIR.mkdir(exist_ok=True)
+    PDF_DIR.mkdir(parents=True, exist_ok=True)
     file_id = str(uuid.uuid4())
     data = PdfInput(name=name, title=title, subtitle=subtitle, dias=dias)
     render_itinerario(data).output(PDF_DIR / f"{file_id}.pdf")

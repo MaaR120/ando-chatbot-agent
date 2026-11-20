@@ -16,9 +16,9 @@ class TestSkillDiscovery(unittest.TestCase):
         (root / folder / "SKILL.md").write_text(content, encoding="utf-8")
 
     def test_pdf_skill_is_discovered(self):
-        self.assertIn("pdf-itinerario", SKILLS)
-        self.assertTrue(SKILLS["pdf-itinerario"].description)
-        self.assertIn("generar_pdf", SKILLS["pdf-itinerario"].body)
+        self.assertIn("armar-itinerario", SKILLS)
+        self.assertTrue(SKILLS["armar-itinerario"].description)
+        self.assertIn("generar_pdf", SKILLS["armar-itinerario"].body)
 
     def test_parses_frontmatter_and_body(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -51,12 +51,12 @@ class TestSkillDiscovery(unittest.TestCase):
 
 class TestLoadSkillTool(unittest.TestCase):
     def test_returns_the_body(self):
-        self.assertEqual(load_skill_tool.invoke({"name": "pdf-itinerario"}), SKILLS["pdf-itinerario"].body)
+        self.assertEqual(load_skill_tool.invoke({"name": "armar-itinerario"}), SKILLS["armar-itinerario"].body)
 
     def test_unknown_name_lists_available_skills(self):
         result = load_skill_tool.invoke({"name": "../../.env"})
         self.assertIn("No existe", result)
-        self.assertIn("pdf-itinerario", result)
+        self.assertIn("armar-itinerario", result)
 
     def test_tool_is_available_without_session(self):
         names = [t.name for t in build_agent_tools(None)]
