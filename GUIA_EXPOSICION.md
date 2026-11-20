@@ -6,17 +6,17 @@ Esta guía recorre la consigna punto por punto y, para cada uno, explica **qué 
 
 ---
 
-## 0. Semáforo rápido (después de la migración a `create_agent`, sin commitear todavía)
+## 0. Semáforo rápido
 
 | Req. | Qué pide | Estado | Dónde está / qué falta |
 |---|---|---|---|
 | 2 | Tarea de varios pasos + resultado tangible + dominio acotado | ✅ | Plan de viaje por días → ruta optimizada → **PDF descargable** |
 | 3.1 | Agente con **`create_agent`**, sin Deep Agents | ✅ | `agent/agent.py`: `create_agent(model, tools, system_prompt, middleware, checkpointer)` (LangChain 1.x) |
 | 3.2 | ≥3 tools necesarias, 1 propia, 1 externa, errores sin romper el flujo | ✅ | 8 tools propias. Las validaciones devuelven `{"error": ...}` y cualquier excepción la atrapa el middleware propio `tool_errors_as_messages` |
-| 3.3 | Memoria con **checkpointer** | ✅ | `InMemorySaver` de LangGraph, `thread_id = conversation_id` |
-| 3.4 | UI web que renderiza markdown | ✅ | Next.js + `streamdown` (`frontend/components/chat/markdown.tsx`) |
+| 3.3 | Memoria con **checkpointer** | ✅ | `PostgresSaver` de LangGraph sobre Neon, `thread_id = conversation_id` |
+| 3.4 | UI web que renderiza markdown | ✅ | Next.js + `streamdown` (`frontend/components/chat/markdown.tsx`) y línea de tiempo de cada ruta (`route-timeline.tsx`) |
 | 3.5 | Ver tools (args + resultado, en orden) y razonamiento, **en streaming** | ✅ | `POST /agent/chat/stream` (Server-Sent Events) + `AndoTouristAgent.stream()`. La UI pinta cada evento al llegar |
-| 3.6 | RAG o Skills usadas en el flujo principal | ✅ | Skills bajo demanda: `skills/pdf-itinerario/SKILL.md` + `load_skill_tool` |
+| 3.6 | RAG o Skills usadas en el flujo principal | ✅ | Skills bajo demanda: `skills/armar-itinerario/SKILL.md` + `load_skill_tool` |
 | 3.7 | Middleware de LangChain mínimo y justificado | ✅ | Ningún middleware prearmado. Hay 2 propios (`agent/middleware.py`). El `CORSMiddleware` es de FastAPI |
 | 4 | Modelo con tool calling, manejo de 429, idealmente razonamiento | ✅ | Claude Haiku 5.5 con *adaptive thinking* (o gpt-oss-120b en Groq, que también expone razonamiento); `max_retries=6`; 429/413 → mensaje amigable |
 | 6.1 | README con instalación, `.env.example`, requirements | ✅ | `README.md` en la raíz, `.env.example` sin claves y `requirements.txt` actualizado |
@@ -36,13 +36,16 @@ Esta guía recorre la consigna punto por punto y, para cada uno, explica **qué 
 > "Armame un plan de 2 días: uno en Maipú con bodegas y otro en Luján de Cuyo con algo de gastronomía, presupuesto máximo 30.000 pesos. Después pasámelo a PDF."
 
 Pasos que hace el agente:
-1. `search_pois_tool` (Maipú, bodegas, max_price) → candidatos reales.
-2. `search_pois_tool` (Luján de Cuyo, gastronomía) → candidatos.
-3. Elige 3–4 lugares por día, descartando los cerrados o fuera de presupuesto.
-4. `optimize_route_tool` por cada día con 3+ lugares → orden, horas de llegada, avisos de horario.
-5. Presenta el plan en markdown.
-6. (Turno siguiente, **usa memoria**) "pasalo a PDF" → `load_skill_tool("pdf-itinerario")` → `generar_pdf` con el plan del turno anterior.
-7. La UI muestra el botón **Descargar PDF**.
+1. `load_skill_tool("armar-itinerario")` → carga el procedimiento de 6 pasos.
+2. `search_pois_tool` (Maipú, bodegas, max_price) y `search_pois_tool` (Luján de Cuyo, gastronomía) → candidatos reales.
+3. Elige 2–4 lugares por día, descartando los cerrados o fuera de presupuesto.
+4. `get_poi_reviews_summary_tool` por cada lugar elegido → puntuación y opiniones; cambia los mal puntuados.
+5. `optimize_route_tool` por cada día con 2 o más lugares → orden, horas de llegada, traslados, avisos de horario.
+6. `generar_pdf` con llegada, duración, traslado, puntuación y una frase de las reseñas por lugar.
+7. La UI muestra la **línea de tiempo** de cada día (hora, duración, traslados, precio, ★ puntuación, zona y descripción) con el botón **Descargar PDF** en su encabezado. El texto del agente es corto y no repite lo que ya muestra la línea de tiempo.
+8. (Turno siguiente, **usa memoria**) "¿qué opinan del primero?" o "cambiá el día 2" → usa los ids del turno anterior sin volver a buscar.
+
+Si el usuario no pide PDF, la línea de tiempo trae el botón **Generar PDF**, que manda "Pasame este plan a PDF" como un mensaje más.
 
 **Por qué cumple las 3 condiciones:**
 - *Varios pasos:* no se puede resolver con una llamada: hay que buscar, filtrar, optimizar ruta (un problema de ruteo con OR-Tools) y generar un archivo.
@@ -103,13 +106,14 @@ recommendationService/app/
 │   ├── prompts.py          ← system prompt (alcance, veracidad, uso de tools, estilo)
 │   ├── memory/chat_history.py ← convierte historial a mensajes LangChain
 │   ├── skills/             ← mecanismo de conocimiento propio (skills)
-│   │   └── pdf-itinerario/SKILL.md
+│   │   └── armar-itinerario/SKILL.md
 │   └── tools/              ← las 8 tools
 ├── api/routes_agent.py     ← endpoints del chat, historial y descarga de PDF
 ├── core/llm_factory.py     ← elige proveedor (groq / openai / anthropic)
 ├── core/config.py          ← variables de entorno y límites
 └── services/               ← lógica de negocio (optimizador de rutas, recomendadores, historial)
 frontend/components/chat/chat-component.tsx ← UI del chat
+frontend/components/chat/route-timeline.tsx ← línea de tiempo de cada ruta + botón de PDF
 ```
 
 ---
@@ -119,14 +123,17 @@ frontend/components/chat/chat-component.tsx ← UI del chat
 **Qué hay** (`recommendationService/app/agent/agent.py`):
 
 ```python
-CHECKPOINTER = InMemorySaver()          # uno solo para todo el proceso
+pool = ConnectionPool(settings.database_url, open=True,
+                      kwargs={"autocommit": True, "prepare_threshold": None})
+checkpointer = PostgresSaver(pool)      # uno solo, compartido por todas las instancias
+checkpointer.setup()                    # crea sus tablas si no existen
 
 self.graph = create_agent(
     model=self.llm,
     tools=self.tools,
     system_prompt=build_system_prompt(user_id),
     middleware=[trim_history, tool_errors_as_messages],
-    checkpointer=CHECKPOINTER,
+    checkpointer=checkpointer,
 )
 result = self.graph.invoke(
     {"messages": [HumanMessage(message)]},
@@ -194,15 +201,16 @@ Todas son **propias** (escritas por el grupo con `@tool` de LangChain) y casi to
 ## 5. Requisito 3.3 — Memoria de corto plazo
 
 **Cómo funciona:**
-1. **Checkpointer `InMemorySaver`** (LangGraph), pasado a `create_agent`. Después de cada paso del grafo guarda el **estado completo** de la conversación: mensajes del usuario, respuestas, tool calls y resultados de las tools.
+1. **Checkpointer `PostgresSaver`** (LangGraph, paquete `langgraph-checkpoint-postgres`), pasado a `create_agent`. Guarda en tablas propias de la misma base (Neon en producción). Después de cada paso del grafo guarda el **estado completo** de la conversación: mensajes del usuario, respuestas, tool calls y resultados de las tools.
 2. La clave es el **`thread_id`**, que es el `conversation_id` de la BD. En cada request solo se manda el mensaje nuevo; el checkpointer agrega los anteriores de ese hilo. Distintas conversaciones no se mezclan.
 3. **Recorte para el contexto:** el estado crece en cada turno. El middleware propio `trim_history` le manda al modelo solo los últimos `AGENT_HISTORY_TURNS` (5) turnos. Siempre corta al inicio de un mensaje del usuario, para no separar una tool call de su resultado. El estado guardado no se toca.
 4. **Persistencia aparte en Postgres** (`conversaciones_ia` / `mensajes_ia`, `services/chat_history_service.py`): guarda el texto, el razonamiento y los steps para que la UI liste y reabra conversaciones viejas.
-5. **Siembra:** `InMemorySaver` vive en la RAM del proceso. Si el servidor se reinicia y el usuario reabre una conversación vieja, el checkpointer no conoce ese hilo. En ese caso `agent.run` lo siembra con el texto guardado en la BD (`memory/chat_history.py`, últimos 10 mensajes). Si el hilo ya existe, no se siembra, para no duplicar.
+5. **Siembra:** si el checkpointer no conoce un hilo (por ejemplo, una conversación creada antes de pasar a `PostgresSaver`), `agent.run` lo siembra con el texto guardado en la BD (`memory/chat_history.py`, últimos 10 mensajes). Si el hilo ya existe, no se siembra, para no duplicar.
+6. **Veracidad con historial recortado:** como el modelo solo ve los últimos 5 turnos, el bloque `<veracidad>` le dice que si un dato no está en lo que ve, lo vuelva a consultar con una tool en vez de "corregirse" contra algo que ya no tiene delante. Lo agregamos después de ver al agente desmentir un horario correcto.
 
 **Qué se gana frente al historial manual de antes:** antes solo volvía al modelo el **texto** de cada respuesta. Ahora vuelven también las tool calls y sus resultados. Ejemplo real probado: turno 1 "Dame 3 bodegas en Maipú y ordená la ruta", turno 2 "¿Qué opinan del primero?". En el turno 2 el agente llamó a `get_poi_reviews_summary_tool` con el **UUID** del lugar que había devuelto `search_pois_tool` en el turno 1. Con texto solo, tendría que buscarlo de nuevo por nombre.
 
-**Por qué `InMemorySaver` y no `PostgresSaver`:** es memoria **de corto plazo**, que es lo que pide la consigna. No suma dependencias ni tablas, y la persistencia larga ya la cubre la BD con la siembra. Si preguntan qué mejorarían: `PostgresSaver` (paquete `langgraph-checkpoint-postgres`) para que el estado completo sobreviva reinicios y funcione con varias instancias del servidor.
+**Por qué `PostgresSaver` y no `InMemorySaver`:** en Vercel cada request puede caer en una instancia distinta. Con `InMemorySaver` el turno 2 llegaba a otra instancia sin el estado y el agente "se olvidaba" del turno 1. Con `PostgresSaver` todas leen el mismo estado y sobrevive reinicios. Detalle: Neon usa un pooler (PgBouncer), por eso la conexión va con `prepare_threshold=None` (sin prepared statements). Hay un test que lo prueba con dos instancias del agente sobre la misma base (`TestPostgresCheckpointer`).
 
 **Para la demo:** un turno que dependa del anterior, por ejemplo "pasalo a PDF" o "¿qué opinan del primero?".
 
@@ -213,7 +221,9 @@ Todas son **propias** (escritas por el grupo con `@tool` de LangChain) y casi to
 - **Next.js 16 + React 19 + Tailwind + shadcn** (`frontend/`). La consigna recomienda Streamlit pero acepta cualquier UI web.
 - Markdown con **`streamdown`** (`components/chat/markdown.tsx`): listas, negritas, enlaces, código.
 - Panel lateral de conversaciones (listar, abrir, borrar) → usa los endpoints `/agent/conversations`.
-- Botón **Descargar PDF** debajo del mensaje cuando un step fue `generar_pdf` (lee `file_id` del resultado y llama a `GET /agent/pdfs/{file_id}`).
+- **Línea de tiempo** (`route-timeline.tsx`): por cada `optimize_route_tool` del turno pinta las paradas con hora de llegada, duración, traslado al siguiente, y a la derecha ★ puntuación y precio; debajo zona y descripción. Esos datos los toma de los resultados de `search_pois_tool` de toda la conversación, sin pedir nada nuevo al backend.
+- Botón de PDF en el encabezado de la línea de tiempo: **Descargar PDF** si ya hay un `generar_pdf` (lee `file_id` y llama a `GET /agent/pdfs/{file_id}`), o **Generar PDF**, que manda "Pasame este plan a PDF".
+- Scroll automático mientras llega la respuesta. Tema claro con Source Sans 3, Fraunces para títulos e IBM Plex Mono para horas y precios.
 - Justificación de no usar Streamlit: el proyecto es parte de una app real (Ando) con frontend web propio; FastAPI separado permite reutilizar el agente desde la app móvil/web.
 
 ---
@@ -286,18 +296,20 @@ Al llegar `done`, se guarda el turno en Postgres. Como el `200 OK` ya se mandó 
 3. Al system prompt **sólo entra el catálogo** (una línea "nombre: descripción" por skill) en el bloque `<skills>`.
 4. Cuando el pedido coincide, el agente llama a `load_skill_tool(name)` y recién ahí el cuerpo entra al contexto.
 
-**Skill actual — `pdf-itinerario`:** le enseña al agente a armar `generar_pdf`:
-- de dónde sacar los datos (itinerario guardado vía `get_user_itinerary_tool` o el plan que propuso; completar zona/descripción/precio con `search_pois_tool`, nunca inventar),
-- cómo llenar cada argumento (`titulo` sin "Día N" porque la plantilla numera, `precio_desde` 0 = gratis / null = desconocido),
-- reglas de redacción (sin markdown/emojis/links porque fpdf no los renderiza),
-- qué decir después ("usá el botón de descarga").
+**Skill actual — `armar-itinerario`:** el procedimiento completo de Ando para un plan de viaje, en 6 pasos que usan **todas** las tools:
+1. Entender el pedido (días, departamentos, tipo, presupuesto, hora); si falta algo, usar valores por defecto y aclararlo.
+2. Elegir lugares: con sesión, `get_user_itinerary_tool` y las dos tools de recomendaciones; siempre `search_pois_tool` por día; 2–4 lugares por día, descartando cerrados o caros.
+3. Revisar reseñas con `get_poi_reviews_summary_tool` y cambiar los mal puntuados.
+4. `optimize_route_tool` por cada día con 2 o más lugares; si hay `aviso_horario`, reemplazar o reoptimizar una vez.
+5. `generar_pdf`: cómo llenar cada campo (llegada, duración y traslado del optimizador, puntuación y frase de reseñas, zona "General" → solo el departamento, `precio_desde` 0 = gratis / null = desconocido, sin markdown ni emojis).
+6. Responder corto: la línea de tiempo ya muestra paradas, horarios y precios, así que el texto no los repite.
 
-**Está en el flujo principal:** el prompt dice explícitamente "antes de llamar `generar_pdf`, cargá la skill `pdf-itinerario`", y generar el PDF es el resultado tangible del caso de uso.
+**Está en el flujo principal:** el prompt dice que ante un itinerario, un plan de viaje o un PDF se cargue `armar-itinerario`, y ese es justamente el caso de uso. Reemplazó a la skill `pdf-itinerario`, que solo cubría el armado del PDF.
 
 **Justificación (skills vs RAG):**
 - El conocimiento factual (lugares, precios, horarios) ya está **estructurado en la BD** y se consulta por SQL con filtros exactos → no tiene sentido vectorizarlo.
 - Lo que el modelo **no sabe** es el *procedimiento* propio de Ando (cómo armar el PDF, de dónde sacar cada dato). Eso es conocimiento procedural → skill.
-- **Contexto:** el prompt sólo carga una línea por skill; el cuerpo (~400 tokens) entra sólo cuando se necesita. Escala a muchas skills sin inflar cada request. En la misma línea, `search_pois_tool` recorta descripciones a 200 caracteres y limita resultados (default 8, máx 12) — pensado para el límite de 8000 TPM de Groq.
+- **Contexto:** el prompt sólo carga una línea por skill; el cuerpo (~1.000 tokens) entra sólo cuando se necesita. Escala a muchas skills sin inflar cada request. En la misma línea, `search_pois_tool` recorta descripciones a 200 caracteres y limita resultados (default 8, máx 12) — pensado para el límite de 8000 TPM de Groq.
 
 ---
 
@@ -329,6 +341,8 @@ Otras cosas que se resolvieron sin middleware:
 | groq | `openai/gpt-oss-120b` (default en config) | Alternativa gratuita |
 | openai | configurable | Alternativa |
 
+**En producción (Vercel):** el mismo cliente de Anthropic apunta a **Vercel AI Gateway** con `ANTHROPIC_BASE_URL=https://ai-gateway.vercel.sh`. No cambia código del agente, solo variables de entorno, y se paga con los créditos de la cuenta.
+
 **Por qué Claude Haiku 5.5:**
 - Soporta **tool calling** nativo y robusto con schemas anidados (el de `generar_pdf` es complejo).
 - Es un modelo de **razonamiento** y la API **devuelve los bloques de thinking** → se pueden mostrar en la UI (lo que la consigna marca como ideal).
@@ -351,7 +365,7 @@ Otras cosas que se resolvieron sin middleware:
 - ✅ `.env.example` sin claves reales (`"your api key"`); `.env` está en `.gitignore` (commit `7872679`).
 - ✅ `recommendationService/requirements.txt`.
 - ✅ Datos reproducibles: `docker-compose.yml` levanta Postgres 16 y carga `init.sql` (schema + datos de POIs). `gran-mendoza-pois.json` es el dataset fuente.
-- ✅ 88 tests en `recommendationService/tests/`: tools, prompt, skills, PDF, rutas, optimizador y el agente con un modelo falso (memoria, aislamiento de hilos, errores de tools, recorte).
+- ✅ 100 tests en `recommendationService/tests/`: tools, prompt, skills, PDF, rutas, optimizador y el agente con un modelo falso (memoria, aislamiento de hilos, errores de tools, recorte) y `PostgresSaver` con dos instancias.
 - ✅ `README.md` en la raíz: requisitos, `.env`, `docker compose up -d`, backend, frontend, tests y cómo funciona cada componente.
 
 ### Presentación (lo que tiene que tener)
@@ -360,18 +374,18 @@ Otras cosas que se resolvieron sin middleware:
 3. Diagrama del flujo (sección 2, el mermaid).
 4. Justificación de cada componente (secciones 4–9).
 5. **Limitaciones conocidas y qué mejorarían** — sugeridas:
-   - El checkpointer es en memoria: un reinicio pierde el estado completo (se resiembra solo el texto) → `PostgresSaver`.
+   - En Vercel los PDFs se guardan en `/tmp` de la instancia: si la descarga cae en otra instancia puede no encontrarlo → Vercel Blob.
+   - El modelo solo ve los últimos 5 turnos: en conversaciones largas tiene que volver a consultar datos viejos.
    - No conoce la ubicación del usuario (pregunta el departamento).
    - No puede crear/modificar itinerarios en la app, sólo proponer.
    - Sin login real: el `user_id` lo elige la UI (en producción vendría de un token validado).
    - Tiempos de traslado estimados (no usa tráfico real ni transporte público real).
-   - Los PDFs se guardan en disco local sin limpieza.
    - Dependencia del rate limit del proveedor.
 
 ### Demo (guion sugerido)
-1. **Turno 1:** "Quiero 2 días: uno en Maipú con bodegas y otro en Luján de Cuyo con gastronomía, hasta 30.000 pesos." → mostrar razonamiento, `search_pois_tool` ×2, `optimize_route_tool`, respuesta markdown.
-2. **Turno 2 (memoria):** "Cambiá el segundo día a Godoy Cruz" o "¿Qué opinan del primer lugar del día 1?" → depende del turno anterior.
-3. **Turno 3 (memoria + skill + resultado):** "Pasalo a PDF" → `load_skill_tool` → `generar_pdf` → descargar y **abrir el PDF**.
+1. **Turno 1 (skill + tools + resultado):** "Quiero 2 días: uno en Maipú con bodegas y otro en Luján de Cuyo con gastronomía, hasta 30.000 pesos. Pasalo a PDF." → mostrar razonamiento, `load_skill_tool("armar-itinerario")`, `search_pois_tool` ×2, reseñas, `optimize_route_tool` ×2, `generar_pdf`, y la **línea de tiempo** de cada día.
+2. **Descargar y abrir el PDF** desde el botón del encabezado de la línea de tiempo: se ven los horarios, traslados, puntuaciones y reseñas.
+3. **Turno 2 (memoria):** "¿Qué opinan del primer lugar del día 1?" o "Cambiá el segundo día a Godoy Cruz" → usa los ids del turno anterior sin volver a buscar.
 4. (Opcional) Pregunta fuera de dominio → muestra el `<alcance>`.
 
 ---
@@ -391,15 +405,15 @@ Otras cosas que se resolvieron sin middleware:
 - **¿Qué pasa si saco `optimize_route_tool`?** El LLM ordenaría "a ojo" sin distancias reales ni horarios; podría mandar al usuario a un lugar cerrado. OR-Tools da una solución determinista y verificable.
 - **¿Por qué el `user_id` no es un argumento de las tools?** Si lo fuera, el LLM podría inventarlo o un prompt injection podría pedir datos de otro usuario. Se inyecta por closure desde el servidor.
 - **¿Cómo evitan alucinaciones?** Bloque `<veracidad>`: sólo lugares devueltos por tools; si un dato falta, "Ese dato no figura en la información de Ando". La skill repite la regla para el PDF.
-- **¿Cómo cuidan el contexto?** Descripciones recortadas a 200 chars, `limit` por defecto 8 (máx 12), historial a 10 mensajes, skills cargadas bajo demanda, `max_iterations=10`.
+- **¿Cómo cuidan el contexto?** Descripciones recortadas a 200 chars, `limit` por defecto 8 (máx 12), historial a los últimos 5 turnos, skills cargadas bajo demanda, `max_iterations=10`.
 - **¿Qué hace `create_agent` por dentro?** Arma un grafo de LangGraph con un nodo `model` y un nodo `tools`, con una arista condicional: si el último `AIMessage` tiene `tool_calls` va a `tools`, si no, termina. El estado es la lista `messages`, y el checkpointer la guarda después de cada paso.
 - **¿Qué diferencia hay entre los modos `messages` y `updates` de `graph.stream`?** `messages` da los fragmentos de texto o razonamiento que genera el modelo, token por token. `updates` da el resultado completo de cada nodo cuando termina: el `AIMessage` con sus tool calls, o los `ToolMessage` con los resultados. Usamos `messages` para que el texto aparezca de a poco y `updates` para saber exactamente cuándo se llamó cada tool y qué devolvió.
 - **¿Qué pasa si hay un error en medio del stream?** El HTTP 200 ya se envió, así que se manda un evento `error` con un mensaje amigable, y la UI lo muestra en lugar de la respuesta.
 - **¿Cómo se autentica el usuario?** En la demo no hay autenticación: el `user_id` lo elige la UI con el selector de cuenta. En la app real de Ando vendría de la sesión (por ejemplo, un JWT validado por el backend). Lo que sí está resuelto es que el modelo nunca elige el `user_id`. Es una limitación conocida que conviene mencionar.
 - **¿Qué es un `thread_id`?** La clave con la que el checkpointer guarda y recupera el estado. Usamos el `conversation_id`, así cada conversación de la UI tiene su propia memoria.
-- **¿Qué pasa si el servidor se reinicia?** `InMemorySaver` pierde el estado. Al reabrir la conversación, se siembra el hilo con el texto guardado en Postgres (sin las tool calls).
+- **¿Qué pasa si el servidor se reinicia?** Nada: el estado está en Postgres con `PostgresSaver`, así que cualquier instancia retoma el hilo con sus tool calls.
 - **¿Por qué skills y no RAG?** El dato factual ya está estructurado en SQL; lo que falta es procedimiento propio → skill. Además es más barato en contexto.
 - **¿Qué diferencia hay entre su memoria y un checkpointer?** (sección 5).
 - **¿Por qué `temperature=0.2`?** Respuestas consistentes y fieles a los datos; poca creatividad necesaria. (Con Claude + thinking la temperatura no se pasa, ver `_anthropic`.)
 - **¿Qué pasa con un 429?** Reintentos automáticos con espera; si se agotan, mensaje claro al usuario sin romper la UI.
-- **¿Cómo llega el PDF al usuario?** La tool lo guarda como `generated_pdfs/<uuid>.pdf` y devuelve `file_id`; la UI detecta el step `generar_pdf` y arma el link a `GET /agent/pdfs/{file_id}` (el `file_id` se valida como UUID, así no se puede pedir un path arbitrario).
+- **¿Cómo llega el PDF al usuario?** La tool lo guarda como `<PDF_DIR>/<uuid>.pdf` (`generated_pdfs/` en local, `/tmp` en Vercel) y devuelve `file_id`; la UI detecta el step `generar_pdf` y arma el link a `GET /agent/pdfs/{file_id}` (el `file_id` se valida como UUID, así no se puede pedir un path arbitrario).
