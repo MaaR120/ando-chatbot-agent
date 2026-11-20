@@ -2,7 +2,7 @@
 
 Proyecto: **Ando — Asistente turístico de Mendoza** (`ando-chatbot-agent`)
 
-Esta guía recorre la consigna punto por punto y, para cada uno, explica **qué hay en el proyecto, dónde está y cómo defenderlo**. Al principio está el semáforo de cumplimiento, porque hay requisitos obligatorios que hoy el código **no cumple tal como los pide la consigna**.
+Esta guía recorre la consigna punto por punto y, para cada uno, explica **qué hay en el proyecto, dónde está y cómo defenderlo**. Al principio está el semáforo de cumplimiento de los requisitos obligatorios.
 
 ---
 
@@ -21,7 +21,7 @@ Esta guía recorre la consigna punto por punto y, para cada uno, explica **qué 
 | 4 | Modelo con tool calling, manejo de 429, idealmente razonamiento | ✅ | Claude Haiku 5.5 con *adaptive thinking* (o gpt-oss-120b en Groq, que también expone razonamiento); `max_retries=6`; 429/413 → mensaje amigable |
 | 6.1 | README con instalación, `.env.example`, requirements | ✅ | `README.md` en la raíz, `.env.example` sin claves y `requirements.txt` actualizado |
 
-> **Importante:** la consigna dice que *"un requisito obligatorio de la sección 3 que no esté presente deja su criterio en «No logrado»"*, y que se evalúa el repo **en el último commit anterior a la exposición**. Hay que **commitear y pushear** estos cambios antes de exponer. Ya no queda ningún obligatorio pendiente.
+> **Importante:** la consigna dice que *"un requisito obligatorio de la sección 3 que no esté presente deja su criterio en «No logrado»"*, y que se evalúa el repo **en el último commit anterior a la exposición**. Hay que **mergear el PR #8 a `main`** antes de exponer. Ya no queda ningún obligatorio pendiente.
 
 ---
 
@@ -396,7 +396,7 @@ Otras cosas que se resolvieron sin middleware:
 2. ✅ Errores de tools vía middleware propio (hecho).
 3. ✅ README (hecho).
 4. ✅ Streaming (hecho, ver sección 7).
-5. **Commitear y pushear** antes de la exposición. Se evalúa el último commit.
+5. **Mergear el PR #8 a `main`** antes de la exposición. Se evalúa el último commit.
 
 ---
 
